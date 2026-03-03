@@ -19,6 +19,7 @@ import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
@@ -58,6 +59,7 @@ import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/S
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -100,6 +102,8 @@ export class ServiceContainer {
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
+  private _onePasswordService: OnePasswordService | null | undefined = undefined;
+  private _onePasswordServiceAccountName: string | undefined;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -141,6 +145,17 @@ export class ServiceContainer {
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
 
+    // 1Password integration — resolve references lazily so config updates are picked
+    // up without requiring an app restart.
+    const opResolver: ExternalSecretResolver = async (ref: string) => {
+      const service = this.onePasswordService;
+      if (!service) {
+        return undefined;
+      }
+
+      return service.resolve(ref);
+    };
+
     const core = createCoreServices({
       config,
       extensionMetadataPath: path.join(config.rootDir, "extensionMetadata.json"),
@@ -149,6 +164,7 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
+      opResolver,
     });
 
     // Spread core services into class fields
@@ -200,7 +216,7 @@ export class ServiceContainer {
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
-    this.terminalService = new TerminalService(config, this.ptyService);
+    this.terminalService = new TerminalService(config, this.ptyService, opResolver);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
@@ -209,7 +225,12 @@ export class ServiceContainer {
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(config, this.providerService, this.policyService);
+    this.voiceService = new VoiceService(
+      config,
+      this.providerService,
+      this.policyService,
+      opResolver
+    );
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
@@ -287,6 +308,27 @@ export class ServiceContainer {
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
+  }
+
+  get onePasswordService(): OnePasswordService | null {
+    const opAccountName = this.config.loadConfigOrDefault().onePasswordAccountName;
+
+    if (!opAccountName) {
+      this._onePasswordService = null;
+      this._onePasswordServiceAccountName = undefined;
+      return null;
+    }
+
+    if (
+      this._onePasswordService === undefined ||
+      this._onePasswordService === null ||
+      this._onePasswordServiceAccountName !== opAccountName
+    ) {
+      this._onePasswordService = new OnePasswordService(opAccountName);
+      this._onePasswordServiceAccountName = opAccountName;
+    }
+
+    return this._onePasswordService;
   }
 
   async initialize(): Promise<void> {
@@ -445,6 +487,8 @@ export class ServiceContainer {
    * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
    */
   toORPCContext(): Omit<ORPCContext, "headers"> {
+    const resolveOnePasswordService = () => this.onePasswordService;
+
     return {
       config: this.config,
       aiService: this.aiService,
@@ -456,6 +500,9 @@ export class ServiceContainer {
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
+      get onePasswordService() {
+        return resolveOnePasswordService();
+      },
       terminalService: this.terminalService,
       editorService: this.editorService,
       windowService: this.windowService,

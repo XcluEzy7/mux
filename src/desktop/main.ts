@@ -649,12 +649,25 @@ async function loadServices(): Promise<void> {
 
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
+    // Use Object.defineProperties to copy all property descriptors from
+    // orpcContext as own-properties (required by oRPC's internal property
+    // enumeration) while preserving getters like onePasswordService that
+    // must resolve lazily rather than being snapshotted at construction.
+    const messagePortContext = Object.defineProperties(
+      {} as typeof orpcContext & { headers: { authorization: string } },
+      {
+        ...Object.getOwnPropertyDescriptors(orpcContext),
+        headers: {
+          value: { authorization: `Bearer ${authToken}` },
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        },
+      }
+    );
+
     orpcHandler.upgrade(serverPort, {
-      context: {
-        ...orpcContext,
-        // Inject synthetic auth header so auth middleware passes
-        headers: { authorization: `Bearer ${authToken}` },
-      },
+      context: messagePortContext,
     });
     serverPort.start();
   });

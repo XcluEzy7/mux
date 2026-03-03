@@ -1,6 +1,7 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
@@ -578,6 +579,7 @@ export const router = (authToken?: string) => {
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
       updateAgentAiDefaults: t
@@ -683,6 +685,20 @@ export const router = (authToken?: string) => {
               ...config,
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
+            };
+          });
+        }),
+      updateOnePasswordAccountName: t
+        .input(schemas.config.updateOnePasswordAccountName.input)
+        .output(schemas.config.updateOnePasswordAccountName.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const trimmedAccountName = input.onePasswordAccountName?.trim() ?? undefined;
+            const normalizedAccountName =
+              trimmedAccountName === "" ? undefined : trimmedAccountName;
+            return {
+              ...config,
+              onePasswordAccountName: normalizedAccountName,
             };
           });
         }),
@@ -1692,11 +1708,13 @@ export const router = (authToken?: string) => {
           const resolvedProjectPath = projectPathProvided
             ? input.projectPath!
             : context.config.rootDir;
+          const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
 
-          const secrets = secretsToRecord(
+          const secrets = await secretsToRecord(
             projectPathProvided
               ? context.config.getEffectiveSecrets(resolvedProjectPath)
-              : context.config.getGlobalSecrets()
+              : context.config.getGlobalSecrets(),
+            opResolver
           );
 
           const configuredTransport = input.name
@@ -2171,7 +2189,11 @@ export const router = (authToken?: string) => {
           .output(schemas.projects.mcp.test.output)
           .handler(async ({ context, input }) => {
             const start = Date.now();
-            const secrets = secretsToRecord(context.config.getEffectiveSecrets(input.projectPath));
+            const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
+            const secrets = await secretsToRecord(
+              context.config.getEffectiveSecrets(input.projectPath),
+              opResolver
+            );
 
             const configuredTransport = input.name
               ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
@@ -4233,6 +4255,48 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.analyticsService.rebuildAll();
         }),
+    },
+    onePassword: {
+      isAvailable: t
+        .output(schemas.onePassword.isAvailable.output)
+        .handler(async ({ context }) => ({
+          available: (await context.onePasswordService?.isAvailable()) ?? false,
+        })),
+      listVaults: t.output(schemas.onePassword.listVaults.output).handler(async ({ context }) => {
+        if (!context.onePasswordService) return [];
+        return context.onePasswordService.listVaults();
+      }),
+      listItems: t
+        .input(schemas.onePassword.listItems.input)
+        .output(schemas.onePassword.listItems.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.listItems(input.vaultId);
+        }),
+      getItemFields: t
+        .input(schemas.onePassword.getItemFields.input)
+        .output(schemas.onePassword.getItemFields.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.getItemFields(input.vaultId, input.itemId);
+        }),
+      buildReference: t
+        .input(schemas.onePassword.buildReference.input)
+        .output(schemas.onePassword.buildReference.output)
+        .handler(({ input }) => ({
+          reference: OnePasswordService.buildReference(
+            input.vaultId,
+            input.itemId,
+            input.fieldId,
+            input.sectionId ?? undefined
+          ),
+          label: OnePasswordService.buildLabel(
+            input.vaultTitle ?? input.vaultId,
+            input.itemTitle ?? input.itemId,
+            input.fieldTitle ?? input.fieldId,
+            input.sectionTitle ?? input.sectionId ?? undefined
+          ),
+        })),
     },
     ssh: {
       prompt: {

@@ -152,6 +152,11 @@ export const AWSCredentialStatusSchema = z.object({
 
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
+  apiKeyIsOpRef: z.boolean().optional(),
+  /** Non-secret op:// reference URI when apiKey points to 1Password. */
+  apiKeyOpRef: z.string().optional(),
+  /** Human-readable label for apiKeyOpRef to display in the UI. */
+  apiKeyOpLabel: z.string().optional(),
   /** Whether this provider is enabled for model requests */
   isEnabled: z.boolean().default(true),
   /** Whether this provider is configured and ready to use */
@@ -1605,6 +1610,7 @@ export const config = {
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      onePasswordAccountName: z.string().nullish(),
     }),
   },
   saveConfig: {
@@ -1640,6 +1646,14 @@ export const config = {
     input: z
       .object({
         stopCoderWorkspaceOnArchive: z.boolean(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateOnePasswordAccountName: {
+    input: z
+      .object({
+        onePasswordAccountName: z.string().nullish(),
       })
       .strict(),
     output: z.void(),
