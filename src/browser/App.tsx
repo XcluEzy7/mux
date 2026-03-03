@@ -1,7 +1,7 @@
 import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
 import { useRouter } from "./contexts/RouterContext";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -182,6 +182,9 @@ function AppInner() {
 
   // History navigation (back/forward)
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationRef = useRef(location);
+  locationRef.current = location;
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects: userProjects,
@@ -737,8 +740,8 @@ function AppInner() {
     navigate,
   ]);
   // Mouse back/forward buttons (buttons 3 and 4)
-  const handleMouseNavigation = useCallback(
-    (e: React.MouseEvent) => {
+  useEffect(() => {
+    const handleMouseNavigation = (e: MouseEvent) => {
       if (e.button === 3) {
         e.preventDefault();
         void navigate(-1);
@@ -746,9 +749,31 @@ function AppInner() {
         e.preventDefault();
         void navigate(1);
       }
-    },
-    [navigate]
-  );
+    };
+
+    // Capture phase fires before Chrome's default back/forward handling
+    window.addEventListener("mousedown", handleMouseNavigation, true);
+    return () => window.removeEventListener("mousedown", handleMouseNavigation, true);
+  }, [navigate]);
+
+  useEffect(() => {
+    // Only needed in standalone PWA mode — normal browser tabs should have standard back/forward behavior
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+    if (window.api || !isStandalone) return;
+
+    // Push a dummy state so back button has somewhere to go without leaving the app
+    window.history.pushState({ mux: true }, "", window.location.href);
+
+    const handlePopState = () => {
+      // Re-push the correct URL from MemoryRouter, not the popped browser URL
+      const { pathname, search, hash } = locationRef.current;
+      const correctUrl = `${window.location.origin}${pathname}${search}${hash}`;
+      window.history.pushState({ mux: true }, "", correctUrl);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
   useEffect(() => {
@@ -956,10 +981,7 @@ function AppInner() {
 
   return (
     <>
-      <div
-        className="bg-bg-dark mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]"
-        onMouseUp={handleMouseNavigation}
-      >
+      <div className="bg-bg-dark mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
