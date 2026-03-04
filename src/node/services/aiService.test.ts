@@ -35,8 +35,9 @@ import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
-import type { StreamAbortEvent } from "@/common/types/stream";
+import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
+import type { DevToolsService } from "./devToolsService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
@@ -76,18 +77,105 @@ describe("AIService.setupStreamEventForwarding", () => {
     const historyService = new HistoryService(config);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    const service = new AIService(config, historyService, initStateManager, providerService);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
 
     const cleanupError = new Error("disk full");
     const deletePartialSpy = spyOn(historyService, "deletePartial").mockImplementation(() =>
       Promise.reject(cleanupError)
     );
 
-    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
     const abortEvent: StreamAbortEvent = {
       type: "stream-abort",
       workspaceId: "workspace-1",
       messageId: "message-1",
+      abandonPartial: true,
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(abortEvent.messageId, {
+      workspaceId: abortEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(abortEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(abortEvent.messageId)).toBe(false);
+  });
+
+  it("forwards stream-abort with empty messageId without throwing", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-empty-message-id");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    internals.pendingDevToolsRunMetadataByMessageId.set("message-1", {
+      workspaceId: "workspace-1",
+      metadataId: "metadata-1",
+    });
+
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "",
       abandonPartial: true,
     };
 
@@ -98,7 +186,124 @@ describe("AIService.setupStreamEventForwarding", () => {
     streamManager.emit("stream-abort", abortEvent);
 
     expect(await forwardedAbortPromise).toEqual(abortEvent);
-    expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
+    expect(clearPendingRunMetadataSpy).not.toHaveBeenCalled();
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has("message-1")).toBe(true);
+  });
+
+  it("clears tracked devtools run metadata on stream error", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-error-devtools-cleanup");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    const errorEvent: ErrorEvent = {
+      type: "error",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      error: "request failed",
+      errorType: "rate_limit",
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(errorEvent.messageId, {
+      workspaceId: errorEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedErrorPromise = new Promise<ErrorEvent>((resolve) => {
+      service.once("error", (event) => resolve(event as ErrorEvent));
+    });
+
+    streamManager.emit("error", errorEvent);
+
+    expect(await forwardedErrorPromise).toEqual(errorEvent);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(errorEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(errorEvent.messageId)).toBe(false);
+  });
+
+  it("clears tracked devtools run metadata on stream-end", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-end-devtools-cleanup");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    const endEvent: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      metadata: {
+        model: "anthropic:claude-opus-4-1",
+      },
+      parts: [],
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(endEvent.messageId, {
+      workspaceId: endEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedEndPromise = new Promise<StreamEndEvent>((resolve) => {
+      service.once("stream-end", (event) => resolve(event as StreamEndEvent));
+    });
+
+    streamManager.emit("stream-end", endEvent);
+
+    expect(await forwardedEndPromise).toEqual(endEvent);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(endEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(endEvent.messageId)).toBe(false);
   });
 });
 

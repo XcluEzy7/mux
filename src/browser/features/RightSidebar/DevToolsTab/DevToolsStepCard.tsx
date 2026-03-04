@@ -5,6 +5,7 @@ import {
   Brain,
   ChevronRight,
   Settings,
+  Shield,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import type {
 import { getTokenTotal } from "@/common/types/devtools";
 import { assertNever } from "@/common/utils/assertNever";
 import { formatDuration } from "@/common/utils/formatDuration";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { truncateToFirstLine } from "./devToolsStepCardHelpers";
 
 const PRE_CLASS_NAME =
@@ -30,8 +32,13 @@ const ROLE_COLORS: Record<string, string> = {
   tool: "bg-violet-500/20 text-violet-400",
 };
 const DEFAULT_ROLE_COLOR = "bg-neutral-500/20 text-neutral-400";
+const POLICY_ACTION_STYLES: Record<ToolPolicy[number]["action"], string> = {
+  require: "bg-blue-500/20 text-blue-400",
+  disable: "bg-red-500/20 text-red-400",
+  enable: "bg-green-500/20 text-green-400",
+};
 
-type MetadataSection = "tools" | "options" | "usage";
+type MetadataSection = "tools" | "options" | "usage" | "policy";
 type RawViewMode = "ai-sdk" | "provider";
 
 interface ParsedTool {
@@ -42,6 +49,7 @@ interface ParsedTool {
 
 interface DevToolsStepCardProps {
   step: DevToolsStep;
+  toolPolicy?: ToolPolicy;
 }
 
 export function DevToolsStepCard(props: DevToolsStepCardProps) {
@@ -50,6 +58,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
 
   const tools = extractTools(props.step.input?.tools);
   const tokenSummary = formatStepTokenSummary(props.step.usage);
+  const safeToolPolicy = sanitizeToolPolicy(props.toolPolicy);
 
   const toggleMetadataSection = (section: MetadataSection): void => {
     setActiveMetadataSection((previous) => (previous === section ? null : section));
@@ -81,6 +90,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
           <MetadataBar
             step={props.step}
             tools={tools}
+            toolPolicy={safeToolPolicy ?? undefined}
             activeSection={activeMetadataSection}
             onToggleSection={toggleMetadataSection}
           />
@@ -90,6 +100,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
               section={activeMetadataSection}
               step={props.step}
               tools={tools}
+              toolPolicy={safeToolPolicy ?? undefined}
             />
           )}
 
@@ -115,6 +126,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
 function MetadataBar(props: {
   step: DevToolsStep;
   tools: ParsedTool[];
+  toolPolicy?: ToolPolicy;
   activeSection: MetadataSection | null;
   onToggleSection: (section: MetadataSection) => void;
 }) {
@@ -131,7 +143,8 @@ function MetadataBar(props: {
 
   const hasProviderOptions = props.step.input?.providerOptions != null;
   const hasUsage = props.step.usage != null;
-  const hasPills = props.tools.length > 0 || hasProviderOptions || hasUsage;
+  const hasToolPolicy = props.toolPolicy != null && props.toolPolicy.length > 0;
+  const hasPills = props.tools.length > 0 || hasProviderOptions || hasUsage || hasToolPolicy;
 
   return (
     <div className="border-border-light bg-background-primary flex flex-wrap items-center gap-1 rounded border px-2 py-1">
@@ -178,6 +191,15 @@ function MetadataBar(props: {
               onClick={() => props.onToggleSection("usage")}
             />
           )}
+
+          {hasToolPolicy && (
+            <MetadataPill
+              icon={Shield}
+              label={`${props.toolPolicy?.length ?? 0} policy rules`}
+              active={props.activeSection === "policy"}
+              onClick={() => props.onToggleSection("policy")}
+            />
+          )}
         </div>
       )}
     </div>
@@ -213,6 +235,7 @@ function MetadataSectionContent(props: {
   section: MetadataSection;
   step: DevToolsStep;
   tools: ParsedTool[];
+  toolPolicy?: ToolPolicy;
 }) {
   switch (props.section) {
     case "tools":
@@ -224,6 +247,12 @@ function MetadataSectionContent(props: {
         <TokenUsageSection usage={props.step.usage} />
       ) : (
         <p className="text-muted mt-1 text-[10px]">No usage recorded</p>
+      );
+    case "policy":
+      return props.toolPolicy != null && props.toolPolicy.length > 0 ? (
+        <ToolPolicySection policy={props.toolPolicy} />
+      ) : (
+        <p className="text-muted mt-1 text-[10px]">No policy configured</p>
       );
     default:
       return assertNever(props.section);
@@ -265,6 +294,56 @@ function AvailableToolsSection(props: { tools: ParsedTool[] }) {
   );
 }
 
+function ToolPolicySection(props: { policy: ToolPolicy }) {
+  return (
+    <div className="mt-1 flex flex-col gap-1">
+      {props.policy.map((filter, index) => (
+        <div
+          key={`${filter.regex_match}-${index}`}
+          className="border-border-light bg-background-primary flex items-center gap-2 rounded border px-2 py-1"
+        >
+          <code className="text-foreground font-monospace text-[10px]">{filter.regex_match}</code>
+          <span
+            className={cn(
+              "ml-auto rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase",
+              POLICY_ACTION_STYLES[filter.action]
+            )}
+          >
+            {filter.action}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function sanitizeToolPolicy(value: unknown): ToolPolicy | null {
+  // DevTools runs are replayed from JSONL without strict runtime schema checks.
+  // Filter malformed policy values so opening the Policy section never crashes.
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const sanitized: ToolPolicy = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const regexMatch = entry.regex_match;
+    const action = entry.action;
+    if (typeof regexMatch !== "string") {
+      continue;
+    }
+    if (action !== "enable" && action !== "disable" && action !== "require") {
+      continue;
+    }
+
+    sanitized.push({ regex_match: regexMatch, action });
+  }
+
+  return sanitized.length > 0 ? sanitized : null;
+}
 function ProviderOptionsSection(props: { providerOptions: unknown }) {
   return (
     <div className="mt-1">

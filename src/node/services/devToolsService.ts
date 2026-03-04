@@ -82,10 +82,20 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
   };
 }
 
+type PendingRunMetadata = Partial<Pick<DevToolsRun, "toolPolicy">>;
+
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
   private readonly loadingPromises = new Map<string, Promise<void>>();
   private readonly writeQueues = new Map<string, Promise<void>>();
+
+  /**
+   * Queued run metadata grouped by workspace and request metadata ID.
+   *
+   * Multiple streamMessage calls can overlap within one workspace, so we keep
+   * one pending metadata payload per request instead of a single workspace slot.
+   */
+  private readonly pendingRunMetadata = new Map<string, Map<string, PendingRunMetadata>>();
 
   constructor(private readonly config: Config) {
     super();
@@ -95,7 +105,72 @@ export class DevToolsService extends EventEmitter {
     return this.config.getLlmDebugLogsEnabled();
   }
 
-  async createRun(workspaceId: string, run: DevToolsRun): Promise<void> {
+  /**
+   * Queue metadata to be merged into the next run created for this workspace.
+   *
+   * This bridges the timing gap between policy resolution in AIService (before
+   * any provider call) and lazy run creation in DevTools middleware (on first
+   * provider invocation). Metadata is consumed exactly once by createRun.
+   */
+  setPendingRunMetadata(
+    workspaceId: string,
+    metadataId: string,
+    metadata: Partial<Pick<DevToolsRun, "toolPolicy">>
+  ): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.setPendingRunMetadata requires a workspaceId"
+    );
+    assert(
+      metadataId.trim().length > 0,
+      "DevToolsService.setPendingRunMetadata requires a metadataId"
+    );
+
+    if (!this.enabled) {
+      return;
+    }
+
+    const byWorkspace =
+      this.pendingRunMetadata.get(workspaceId) ?? new Map<string, PendingRunMetadata>();
+    byWorkspace.set(metadataId, metadata);
+    this.pendingRunMetadata.set(workspaceId, byWorkspace);
+  }
+
+  /**
+   * Drop queued run metadata for a workspace.
+   *
+   * When metadataId is provided, clear only that request's entry.
+   * This prevents one request's cleanup path from deleting metadata queued by
+   * overlapping requests in the same workspace.
+   */
+  clearPendingRunMetadata(workspaceId: string, metadataId?: string): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.clearPendingRunMetadata requires a workspaceId"
+    );
+
+    const byWorkspace = this.pendingRunMetadata.get(workspaceId);
+    if (!byWorkspace) {
+      return;
+    }
+
+    if (metadataId == null) {
+      this.pendingRunMetadata.delete(workspaceId);
+      return;
+    }
+
+    assert(
+      metadataId.trim().length > 0,
+      "DevToolsService.clearPendingRunMetadata requires a non-empty metadataId"
+    );
+
+    byWorkspace.delete(metadataId);
+    if (byWorkspace.size === 0) {
+      this.pendingRunMetadata.delete(workspaceId);
+    }
+  }
+
+  async createRun(workspaceId: string, run: DevToolsRun, metadataId?: string): Promise<void> {
     if (!this.enabled) {
       return;
     }
@@ -105,6 +180,23 @@ export class DevToolsService extends EventEmitter {
 
     await this.ensureLoaded(workspaceId);
     const data = this.getOrCreateWorkspaceData(workspaceId);
+
+    // Apply queued run metadata (for example, effective tool policy) captured
+    // before the stream reached provider middleware. Lookup is keyed by request
+    // metadata ID so overlapping requests cannot overwrite each other.
+    const byWorkspace = this.pendingRunMetadata.get(workspaceId);
+    const normalizedMetadataId = metadataId?.trim();
+    if (byWorkspace && normalizedMetadataId != null && normalizedMetadataId.length > 0) {
+      const pendingMetadata = byWorkspace.get(normalizedMetadataId);
+      if (pendingMetadata != null) {
+        Object.assign(run, pendingMetadata);
+        byWorkspace.delete(normalizedMetadataId);
+      }
+
+      if (byWorkspace.size === 0) {
+        this.pendingRunMetadata.delete(workspaceId);
+      }
+    }
 
     data.runs.set(run.id, run);
     await this.appendToFile(workspaceId, { type: "run", run });
@@ -265,6 +357,7 @@ export class DevToolsService extends EventEmitter {
     data.steps.clear();
     data.clearGeneration += 1;
     data.loaded = true;
+    this.pendingRunMetadata.delete(workspaceId);
 
     // Enqueue truncation so clear() cannot race with pending appends.
     await this.enqueueWrite(workspaceId, async () => {
