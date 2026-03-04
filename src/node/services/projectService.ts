@@ -91,6 +91,10 @@ export type CloneEvent =
 
 type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
+interface WorkspaceRemover {
+  remove(workspaceId: string, force?: boolean): Promise<Result<void>>;
+}
+
 function isTildePrefixedPath(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
 }
@@ -316,12 +320,17 @@ export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   private directoryPicker?: () => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
+  private workspaceService?: WorkspaceRemover;
 
   constructor(
     private readonly config: Config,
     sshPromptService?: SshPromptService
   ) {
     this.sshPromptService = sshPromptService;
+  }
+
+  setWorkspaceService(workspaceService: WorkspaceRemover): void {
+    this.workspaceService = workspaceService;
   }
 
   setDirectoryPicker(picker: () => Promise<string | null>) {
@@ -812,10 +821,10 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
-  async remove(projectPath: string): Promise<Result<void, ProjectRemoveError>> {
+  async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
-      const config = this.config.loadConfigOrDefault();
-      const projectConfig = config.projects.get(projectPath);
+      let config = this.config.loadConfigOrDefault();
+      let projectConfig = config.projects.get(projectPath);
 
       if (!projectConfig) {
         return Err({ type: "project_not_found" as const });
@@ -856,7 +865,57 @@ export class ProjectService {
         await this.config.saveConfig(config);
       }
 
-      const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+
+      const totalWorkspaces = counts.activeCount + counts.archivedCount;
+      if (force && totalWorkspaces > 0) {
+        if (!this.workspaceService) {
+          return Err({
+            type: "unknown" as const,
+            message: "Failed to remove project: workspace service unavailable for cascade cleanup",
+          });
+        }
+
+        const workspaceIdsByPath = new Map<string, string>();
+
+        if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
+          const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
+          for (const metadata of allWorkspaceMetadata) {
+            if (metadata.projectPath !== projectPath) {
+              continue;
+            }
+            workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
+          }
+        }
+
+        for (const workspace of projectConfig.workspaces) {
+          // Legacy workspace entries can be missing `id`. Resolve through metadata so
+          // WorkspaceService.remove() receives the canonical workspace ID (it cannot remove by path).
+          const workspaceId = workspace.id ?? workspaceIdsByPath.get(workspace.path);
+          if (!workspaceId) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to resolve workspace ID for ${workspace.path}`,
+            });
+          }
+
+          const removeResult = await this.workspaceService.remove(workspaceId, true);
+          if (!removeResult.success) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to delete workspace ${workspaceId}: ${removeResult.error}`,
+            });
+          }
+        }
+
+        config = this.config.loadConfigOrDefault();
+        projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) {
+          return Err({ type: "project_not_found" as const });
+        }
+        counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      }
+
       if (counts.activeCount + counts.archivedCount > 0) {
         return Err({ type: "workspace_blockers" as const, ...counts });
       }

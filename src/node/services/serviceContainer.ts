@@ -183,6 +183,7 @@ export class ServiceContainer {
     this.backgroundProcessManager = core.backgroundProcessManager;
 
     this.projectService = new ProjectService(config, this.sshPromptService);
+    this.projectService.setWorkspaceService(this.workspaceService);
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(

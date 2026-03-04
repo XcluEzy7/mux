@@ -525,7 +525,7 @@ export const projects = {
     output: z.string().nullable(),
   },
   remove: {
-    input: z.object({ projectPath: z.string() }),
+    input: z.object({ projectPath: z.string(), force: z.boolean().nullish() }).passthrough(),
     output: ResultSchema(z.void(), ProjectRemoveErrorSchema),
   },
   list: {
