@@ -27,21 +27,48 @@ const SENSITIVE_HEADER_NAMES = new Set([
   "x-goog-api-key",
 ]);
 
-/** Prefix-match for bearer/token patterns that may appear under custom names. */
-function isSensitiveHeaderName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (
-    SENSITIVE_HEADER_NAMES.has(lower) ||
-    lower.includes("secret") ||
-    lower.includes("token") ||
-    lower.includes("cookie")
-  );
+/**
+ * Response headers can still carry credentials under custom names (for example
+ * from provider proxies), so we keep broad token/secret redaction enabled in
+ * both directions. To avoid over-redacting operational metadata, explicitly
+ * allowlist known non-sensitive rate-limit response headers.
+ */
+const SAFE_RESPONSE_TOKEN_HEADER_PREFIXES = [
+  "anthropic-ratelimit-",
+  "x-ratelimit-",
+  "ratelimit-",
+] as const;
+
+function isKnownSafeResponseTokenHeader(name: string): boolean {
+  return SAFE_RESPONSE_TOKEN_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-export function redactHeaders(headers: Record<string, string>): Record<string, string> {
+/** Prefix-match for bearer/token patterns that may appear under custom names. */
+function isSensitiveHeaderName(name: string, direction: "request" | "response"): boolean {
+  const lower = name.toLowerCase();
+  if (SENSITIVE_HEADER_NAMES.has(lower) || lower.includes("cookie")) {
+    return true;
+  }
+
+  const containsTokenLikeSecret = lower.includes("secret") || lower.includes("token");
+  if (!containsTokenLikeSecret) {
+    return false;
+  }
+
+  if (direction === "response" && isKnownSafeResponseTokenHeader(lower)) {
+    return false;
+  }
+
+  return true;
+}
+
+export function redactHeaders(
+  headers: Record<string, string>,
+  direction: "request" | "response" = "request"
+): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    redacted[key] = isSensitiveHeaderName(key) ? "[REDACTED]" : value;
+    redacted[key] = isSensitiveHeaderName(key, direction) ? "[REDACTED]" : value;
   }
   return redacted;
 }
