@@ -87,6 +87,11 @@ interface ReviewPanelStats {
   read: number;
 }
 
+interface FileReadStatusSummary {
+  total: number;
+  read: number;
+}
+
 interface ReviewPanelProps {
   workspaceId: string;
   workspacePath: string;
@@ -1164,18 +1169,44 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }
   }, [hunks, recordFirstSeen]);
 
-  // Get read status for a file
+  // Precompute per-file read summaries once so FileTree badges can do O(1) lookups
+  // instead of rescanning every hunk for each rendered node.
+  const { fileReadStatusByPath, readHunkCount } = useMemo(() => {
+    const summaries = new Map<string, FileReadStatusSummary>();
+    let nextReadHunkCount = 0;
+
+    for (const hunk of hunks) {
+      const hunkIsRead = isRead(hunk.id);
+      if (hunkIsRead) {
+        nextReadHunkCount += 1;
+      }
+
+      const existing = summaries.get(hunk.filePath);
+      if (existing) {
+        existing.total += 1;
+        if (hunkIsRead) {
+          existing.read += 1;
+        }
+        continue;
+      }
+
+      summaries.set(hunk.filePath, {
+        total: 1,
+        read: hunkIsRead ? 1 : 0,
+      });
+    }
+
+    return {
+      fileReadStatusByPath: summaries,
+      readHunkCount: nextReadHunkCount,
+    };
+  }, [hunks, isRead]);
+
   const getFileReadStatus = useCallback(
     (filePath: string) => {
-      const fileHunks = hunks.filter((h) => h.filePath === filePath);
-      if (fileHunks.length === 0) {
-        return null; // Unknown state - no hunks loaded for this file
-      }
-      const total = fileHunks.length;
-      const read = fileHunks.filter((h) => isRead(h.id)).length;
-      return { total, read };
+      return fileReadStatusByPath.get(filePath) ?? null;
     },
-    [hunks, isRead]
+    [fileReadStatusByPath]
   );
 
   // Apply frontend filters (read state, search term) and sorting
@@ -1333,16 +1364,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
-  // Calculate stats
+  // Calculate stats from the same precomputed read summaries so read toggles do one pass.
   const stats = useMemo(() => {
     const total = hunks.length;
-    const read = hunks.filter((h) => isRead(h.id)).length;
     return {
       total,
-      read,
-      unread: total - read,
+      read: readHunkCount,
+      unread: total - readHunkCount,
     };
-  }, [hunks, isRead]);
+  }, [hunks.length, readHunkCount]);
 
   // Report stats to parent for tab badge
   useEffect(() => {
@@ -1521,7 +1551,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
-      ) : (
+      ) : !isImmersive ? (
+        // Immersive review renders into its own overlay, so skip the regular review DOM
+        // while it's active to avoid rerendering the hidden file tree and hunk list.
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {diffState.truncationWarning && (
             <div className="bg-warning/10 border-warning/30 text-warning mx-3 my-3 flex items-center gap-1.5 rounded border px-3 py-1.5 text-[10px] leading-[1.3]">
@@ -1582,7 +1614,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
           {/* Single scrollable area containing both file tree and hunks */}
           <div ref={scrollContainerRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {/* FileTree at the top */}
+            {/* FileTree at the top. Immersive review keeps the sidebar mounted but inert,
+                so skip hidden read-status work until the user exits. */}
             {(fileTree ?? isLoadingTree) && (
               <div className="border-border-light flex w-full flex-[0_0_auto] flex-col overflow-hidden border-b">
                 <FileTree
@@ -1590,7 +1623,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   selectedPath={selectedFilePath}
                   onSelectFile={setSelectedFilePath}
                   isLoading={isLoadingTree}
-                  getFileReadStatus={getFileReadStatus}
+                  getFileReadStatus={isImmersive ? undefined : getFileReadStatus}
                   workspaceId={workspaceId}
                 />
               </div>
@@ -1708,7 +1741,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Immersive review mode: render into workspace overlay */}
       {isImmersive &&
