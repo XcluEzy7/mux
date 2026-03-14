@@ -15,6 +15,48 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("defaults n to 1 for task tool calls when omitted", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "do the thing",
+      title: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.n).toBe(1);
+    }
+  });
+
+  it("accepts task tool best-of counts between 1 and 20", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 20,
+      }).success
+    ).toBe(true);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 0,
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 21,
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts bash tool calls using command (alias for script)", () => {
     const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
       command: "ls",
@@ -150,9 +192,15 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
-  it("encourages compact task briefs when spawning sub-agents", () => {
+  it("encourages compact task briefs and best-of delegation discipline", () => {
     expect(TOOL_DEFINITIONS.task.description).toContain("compact task brief");
     expect(TOOL_DEFINITIONS.task.description).toContain("plan file");
+    expect(TOOL_DEFINITIONS.task.description).toContain(
+      "Do not also do a full parallel analysis in the parent"
+    );
+    expect(TOOL_DEFINITIONS.task.description).toContain(
+      "the next step should usually be task_await"
+    );
   });
 
   it("accepts ask_user_question headers longer than 12 characters", () => {
