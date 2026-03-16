@@ -38,6 +38,31 @@ void mock.module("./useBrowserSessionSubscription", () => ({
 
 import { BrowserTab } from "./BrowserTab";
 
+function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
+  return {
+    id: "session-1",
+    workspaceId: "workspace-1",
+    status: "live",
+    currentUrl: "https://example.com",
+    title: "Example page",
+    lastScreenshotBase64: null,
+    lastError: null,
+    streamState: "live",
+    lastFrameMetadata: {
+      deviceWidth: 1280,
+      deviceHeight: 720,
+      pageScaleFactor: 1,
+      offsetTop: 0,
+      scrollOffsetX: 0,
+      scrollOffsetY: 0,
+    },
+    streamErrorMessage: null,
+    startedAt: "2026-03-16T00:00:00.000Z",
+    updatedAt: "2026-03-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function renderBrowserTab() {
   return render(<BrowserTab workspaceId="workspace-1" />);
 }
@@ -64,6 +89,48 @@ describe("BrowserTab recent action timestamps", () => {
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+  });
+
+  test("shows a single combined header badge", () => {
+    mockSession = createSession();
+
+    const liveView = renderBrowserTab();
+
+    expect(liveView.getAllByText("Live")).toHaveLength(1);
+    expect(liveView.queryByText("Stream live")).toBeNull();
+
+    liveView.unmount();
+
+    mockSession = createSession({ status: "ended", streamState: null, title: "Ended page" });
+
+    const endedView = renderBrowserTab();
+
+    expect(endedView.getAllByText("Ended")).toHaveLength(1);
+    expect(endedView.queryByText("Stream live")).toBeNull();
+  });
+
+  test("shows stream-specific combined header badges for live sessions", () => {
+    mockSession = createSession({ streamState: "fallback" });
+
+    const fallbackView = renderBrowserTab();
+
+    expect(fallbackView.getAllByText("Fallback")).toHaveLength(1);
+
+    fallbackView.unmount();
+
+    mockSession = createSession({ streamState: "restart_required", title: "Restart page" });
+
+    const restartRequiredView = renderBrowserTab();
+
+    expect(restartRequiredView.getAllByText("Restart required")).toHaveLength(1);
+
+    restartRequiredView.unmount();
+
+    mockSession = createSession({ streamState: "error", title: "Error page" });
+
+    const streamErrorView = renderBrowserTab();
+
+    expect(streamErrorView.getAllByText("Stream error")).toHaveLength(1);
   });
 
   test("uses the custom tooltip instead of a native title attribute for valid timestamps", () => {

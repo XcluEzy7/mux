@@ -1088,7 +1088,6 @@ export const router = (authToken?: string) => {
         .output(schemas.browserSession.start.output)
         .handler(async ({ context, input }) => {
           return context.browserSessionService.startSession(input.workspaceId, {
-            ownership: input.ownership,
             initialUrl: input.initialUrl,
           });
         }),
@@ -1098,6 +1097,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.browserSessionService.stopSession(input.workspaceId);
           return { success: true };
+        }),
+      sendInput: t
+        .input(schemas.browserSession.sendInput.input)
+        .output(schemas.browserSession.sendInput.output)
+        .handler(({ context, input }) => {
+          return context.browserSessionService.sendInput(input.workspaceId, input.input);
         }),
       subscribe: t
         .input(schemas.browserSession.subscribe.input)

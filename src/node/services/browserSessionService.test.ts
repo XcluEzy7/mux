@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test, type Mock } from "bun:test";
 import * as browserSessionBackendModule from "@/node/services/browserSessionBackend";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import type {
+  BrowserInputEvent,
+  BrowserSession,
+  BrowserSessionEvent,
+} from "@/common/types/browserSession";
 import { log } from "@/node/services/log";
 import { BrowserSessionService } from "@/node/services/browserSessionService";
+import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 
 type CloseAgentBrowserSession = typeof browserSessionBackendModule.closeAgentBrowserSession;
 
@@ -14,13 +20,78 @@ function getPrivateMap<T>(service: BrowserSessionService, fieldName: string): Ma
   return value as Map<string, T>;
 }
 
-function attachMockBackend(workspaceId: string, service: BrowserSessionService) {
+function attachMockBackend(
+  workspaceId: string,
+  service: BrowserSessionService,
+  overrides?: {
+    sendInput?: (input: BrowserInputEvent) => { success: boolean; error?: string };
+  }
+) {
   const backend = {
     stop: mock(() => Promise.resolve()),
+    sendInput: mock(
+      overrides?.sendInput ??
+        (() => {
+          return { success: true };
+        })
+    ),
   };
-  getPrivateMap<{ stop: typeof backend.stop }>(service, "activeBackends").set(workspaceId, backend);
+  getPrivateMap<{ stop: typeof backend.stop; sendInput: typeof backend.sendInput }>(
+    service,
+    "activeBackends"
+  ).set(workspaceId, backend);
   return backend;
 }
+
+function createLiveSession(workspaceId: string): BrowserSession {
+  const now = new Date().toISOString();
+  return {
+    id: `mux-${workspaceId}-abcd1234`,
+    workspaceId,
+    status: "live",
+    currentUrl: "https://example.com",
+    title: "Example",
+    lastScreenshotBase64: null,
+    lastError: null,
+    streamState: "connecting",
+    lastFrameMetadata: null,
+    streamErrorMessage: null,
+    startedAt: now,
+    updatedAt: now,
+  };
+}
+
+describe("BrowserSessionService.startSession", () => {
+  test("reserves a stream port and passes it to the backend", async () => {
+    const workspaceId = "workspace-stream-port";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const createdOptions: browserSessionBackendModule.BrowserSessionBackendOptions[] = [];
+
+    const service = new BrowserSessionService({
+      streamPortRegistry,
+      createBackend: (options) => {
+        createdOptions.push(options);
+        return {
+          start: mock(() => {
+            options.onSessionUpdate(createLiveSession(workspaceId));
+            return Promise.resolve(createLiveSession(workspaceId));
+          }),
+          stop: mock(() => {
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          }),
+        } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+      },
+    });
+
+    await service.startSession(workspaceId, { initialUrl: "https://example.com" });
+
+    expect(createdOptions).toHaveLength(1);
+    expect(createdOptions[0].streamPort).toBe(streamPortRegistry.getReservedPort(workspaceId));
+    expect(createdOptions[0].initialUrl).toBe("https://example.com");
+    expect(createdOptions[0]).not.toHaveProperty("ownership");
+  });
+});
 
 describe("BrowserSessionService.stopSession", () => {
   beforeEach(() => {
@@ -45,6 +116,30 @@ describe("BrowserSessionService.stopSession", () => {
     expect(mockCloseAgentBrowserSession).not.toHaveBeenCalled();
   });
 
+  test("releases the reserved stream port when a tracked session stops", async () => {
+    const workspaceId = "workspace-release-port";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const service = new BrowserSessionService({ streamPortRegistry });
+    const reservedPort = await streamPortRegistry.reservePort(workspaceId);
+
+    const backend = {
+      stop: mock(() => {
+        expect(streamPortRegistry.isReservedPort(workspaceId, reservedPort)).toBe(true);
+        return Promise.resolve();
+      }),
+    };
+
+    getPrivateMap<{ stop: typeof backend.stop }>(service, "activeBackends").set(
+      workspaceId,
+      backend
+    );
+
+    await service.stopSession(workspaceId);
+
+    expect(backend.stop).toHaveBeenCalledTimes(1);
+    expect(streamPortRegistry.getReservedPort(workspaceId)).toBeNull();
+  });
+
   test("closes raw CLI sessions even when no tracked backend exists", async () => {
     const service = new BrowserSessionService();
     const workspaceId = "workspace-cli-only";
@@ -53,6 +148,68 @@ describe("BrowserSessionService.stopSession", () => {
 
     expect(mockCloseAgentBrowserSession).toHaveBeenCalledTimes(1);
     expect(mockCloseAgentBrowserSession).toHaveBeenCalledWith(getMuxBrowserSessionId(workspaceId));
+  });
+
+  test("releases reserved ports for raw CLI sessions too", async () => {
+    const workspaceId = "workspace-cli-release";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const service = new BrowserSessionService({ streamPortRegistry });
+    await streamPortRegistry.reservePort(workspaceId);
+
+    await service.stopSession(workspaceId);
+
+    expect(streamPortRegistry.getReservedPort(workspaceId)).toBeNull();
+  });
+
+  test("emits the cleared stream fields before notifying listeners that the session ended", async () => {
+    const workspaceId = "workspace-ended-update";
+    const events: BrowserSessionEvent[] = [];
+    let backendOptions: browserSessionBackendModule.BrowserSessionBackendOptions | null = null;
+
+    const service = new BrowserSessionService({
+      createBackend: (options) => {
+        backendOptions = options;
+        return {
+          start: mock(() => {
+            const session = createLiveSession(workspaceId);
+            options.onSessionUpdate(session);
+            return Promise.resolve(session);
+          }),
+          stop: mock(() => {
+            options.onSessionUpdate({
+              ...createLiveSession(workspaceId),
+              status: "ended",
+              streamState: null,
+              lastFrameMetadata: null,
+              streamErrorMessage: null,
+            });
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          }),
+        } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+      },
+    });
+
+    service.on(`update:${workspaceId}`, (event: BrowserSessionEvent) => {
+      events.push(event);
+    });
+
+    await service.startSession(workspaceId);
+    expect(backendOptions).not.toBeNull();
+
+    events.length = 0;
+    await service.stopSession(workspaceId);
+
+    expect(events).toHaveLength(2);
+    expect(events[0]?.type).toBe("session-updated");
+    if (events[0]?.type !== "session-updated") {
+      expect.unreachable("expected stopSession to emit a session-updated event before ending");
+    }
+    expect(events[0].session.status).toBe("ended");
+    expect(events[0].session.streamState).toBeNull();
+    expect(events[0].session.lastFrameMetadata).toBeNull();
+    expect(events[0].session.streamErrorMessage).toBeNull();
+    expect(events[1]).toEqual({ type: "session-ended", workspaceId });
   });
 
   test("logs close failures without throwing", async () => {
@@ -118,5 +275,92 @@ describe("BrowserSessionService.stopSession", () => {
       }
     }
     expect(mockCloseAgentBrowserSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("BrowserSessionService.sendInput", () => {
+  const workspaceId = "workspace-send-input";
+  const mouseClickInput: BrowserInputEvent = {
+    kind: "mouse",
+    eventType: "mousePressed",
+    x: 64,
+    y: 96,
+    button: "left",
+    clickCount: 1,
+  };
+
+  test("returns an error when no backend is active", () => {
+    const service = new BrowserSessionService();
+
+    expect(service.sendInput(workspaceId, mouseClickInput)).toEqual({
+      success: false,
+      error: "No active session for workspace",
+    });
+  });
+
+  test("forwards input to the backend and returns its result", () => {
+    const service = new BrowserSessionService();
+    const backend = attachMockBackend(workspaceId, service, {
+      sendInput: () => ({ success: false, error: "Stream socket is not connected" }),
+    });
+
+    const result = service.sendInput(workspaceId, mouseClickInput);
+
+    expect(backend.sendInput).toHaveBeenCalledTimes(1);
+    expect(backend.sendInput).toHaveBeenCalledWith(mouseClickInput);
+    expect(result).toEqual({ success: false, error: "Stream socket is not connected" });
+    expect(service.getRecentActions(workspaceId)).toEqual([]);
+  });
+
+  test("logs a coarse click action when a mouse press succeeds", () => {
+    const service = new BrowserSessionService();
+    attachMockBackend(workspaceId, service);
+
+    const result = service.sendInput(workspaceId, mouseClickInput);
+    const recentActions = service.getRecentActions(workspaceId);
+
+    expect(result).toEqual({ success: true });
+    expect(recentActions).toHaveLength(1);
+    expect(recentActions[0]).toMatchObject({
+      type: "click",
+      description: "Clicked at (64, 96)",
+      metadata: { source: "user-input" },
+    });
+  });
+
+  test("logs a coarse tap action when a touch start succeeds", () => {
+    const service = new BrowserSessionService();
+    attachMockBackend(workspaceId, service);
+
+    const result = service.sendInput(workspaceId, {
+      kind: "touch",
+      eventType: "touchStart",
+      touchPoints: [{ x: 10.2, y: 19.8, id: 1 }],
+    });
+    const recentActions = service.getRecentActions(workspaceId);
+
+    expect(result).toEqual({ success: true });
+    expect(recentActions).toHaveLength(1);
+    expect(recentActions[0]).toMatchObject({
+      type: "click",
+      description: "Tapped at (10, 20)",
+      metadata: { source: "user-input" },
+    });
+  });
+
+  test("does not log keyboard inputs", () => {
+    const service = new BrowserSessionService();
+    attachMockBackend(workspaceId, service);
+
+    const result = service.sendInput(workspaceId, {
+      kind: "keyboard",
+      eventType: "keyDown",
+      key: "a",
+      code: "KeyA",
+      text: "a",
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(service.getRecentActions(workspaceId)).toEqual([]);
   });
 });

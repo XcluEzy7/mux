@@ -21,6 +21,7 @@ import type {
   BrowserSession,
   BrowserSessionStatus,
 } from "@/common/types/browserSession";
+import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
 
 interface BrowserTabProps {
@@ -48,12 +49,6 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
     label: "Ended",
     className: "border-border-light bg-background-secondary text-muted",
   },
-};
-
-const OWNERSHIP_LABELS: Record<BrowserSession["ownership"], string> = {
-  agent: "Agent",
-  user: "User",
-  shared: "Shared",
 };
 
 const ACTION_ICONS: Record<BrowserAction["type"], LucideIcon> = {
@@ -98,7 +93,6 @@ function getSessionErrorMessage(sessionError: unknown, fallbackMessage: string):
 function startBrowserSession(args: {
   browserSessionApi: BrowserSessionClient | null;
   workspaceId: string;
-  ownership: Extract<BrowserSession["ownership"], "agent" | "user">;
   startingSession: boolean;
   stoppingSession: boolean;
   setStartingSession: (value: boolean) => void;
@@ -114,7 +108,6 @@ function startBrowserSession(args: {
   args.browserSessionApi
     .start({
       workspaceId: args.workspaceId,
-      ownership: args.ownership,
     })
     .catch((sessionError: unknown) => {
       args.setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
@@ -142,30 +135,56 @@ export function BrowserTab(props: BrowserTabProps) {
   const screenshotSrc = session?.lastScreenshotBase64
     ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
     : null;
-  const visibleError = startError ?? error ?? session?.lastError ?? null;
+  const visibleError =
+    startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
   const sessionIsActive =
     session?.status === "live" || session?.status === "starting" || session?.status === "paused";
+  const headerBadge = (() => {
+    if (!session && isStarting) {
+      return STATUS_BADGES.starting;
+    }
+    if (!session) {
+      return null;
+    }
+
+    if (session.status === "live") {
+      switch (session.streamState) {
+        case "live":
+          return STATUS_BADGES.live;
+        case "connecting":
+          return { label: "Connecting", className: "border-accent/30 bg-accent/10 text-accent" };
+        case "fallback":
+          return { label: "Fallback", className: "border-warning/30 bg-warning/10 text-warning" };
+        case "restart_required":
+          return {
+            label: "Restart required",
+            className: "border-destructive/20 bg-destructive/10 text-destructive",
+          };
+        case "error":
+          return {
+            label: "Stream error",
+            className: "border-destructive/20 bg-destructive/10 text-destructive",
+          };
+        default:
+          return STATUS_BADGES.live;
+      }
+    }
+
+    return STATUS_BADGES[session.status];
+  })();
   const showStopButton = stoppingSession || sessionIsActive;
   const showStartButton =
     !showStopButton &&
     (session == null || session.status === "ended" || session.status === "error");
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
   const headerSubtitle = session
-    ? [
-        session.currentUrl ?? "No page loaded yet",
-        `${OWNERSHIP_LABELS[session.ownership]} owned`,
-      ].join(" · ")
+    ? (session.currentUrl ?? "No page loaded yet")
     : isStarting
       ? "Starting browser session…"
       : "Start a browser session to see the live frame and recent actions.";
-  const statusBadge = session
-    ? STATUS_BADGES[session.status]
-    : isStarting
-      ? STATUS_BADGES.starting
-      : null;
 
   // This effect syncs the Browser tab with the external browser-session service by
-  // issuing a single agent-owned attach/start request when no session exists yet.
+  // issuing a single attach/start request when no session exists yet.
   useEffect(() => {
     if (
       browserSessionApi == null ||
@@ -187,7 +206,6 @@ export function BrowserTab(props: BrowserTabProps) {
     browserSessionApi
       .start({
         workspaceId: props.workspaceId,
-        ownership: "agent",
       })
       .catch((sessionError: unknown) => {
         setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
@@ -220,7 +238,6 @@ export function BrowserTab(props: BrowserTabProps) {
     startBrowserSession({
       browserSessionApi,
       workspaceId: props.workspaceId,
-      ownership: "user",
       startingSession,
       stoppingSession,
       setStartingSession,
@@ -247,22 +264,49 @@ export function BrowserTab(props: BrowserTabProps) {
       });
   };
 
+  const handleRestartSession = () => {
+    const currentAutoStartState = autoStartStateByWorkspace.get(props.workspaceId);
+    if (
+      browserSessionApi == null ||
+      startingSession ||
+      stoppingSession ||
+      currentAutoStartState?.autoStartPending
+    ) {
+      return;
+    }
+
+    // restart_required means the daemon session is still alive but the live stream transport is not,
+    // so the recovery path must tear down the existing browser process before starting a fresh one.
+    autoStartState.manuallyStopped = false;
+    setStartingSession(true);
+    setStoppingSession(true);
+    setStartError(null);
+
+    browserSessionApi
+      .stop({ workspaceId: props.workspaceId })
+      .then(() =>
+        browserSessionApi.start({
+          workspaceId: props.workspaceId,
+        })
+      )
+      .catch((sessionError: unknown) => {
+        setStartError(getSessionErrorMessage(sessionError, "Failed to restart session"));
+      })
+      .finally(() => {
+        setStoppingSession(false);
+        setStartingSession(false);
+      });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-foreground truncate text-xs font-semibold">{headerTitle}</h3>
-            {statusBadge && (
-              <span
-                className={cn(
-                  "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                  statusBadge.className
-                )}
-              >
-                {statusBadge.label}
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="text-foreground min-w-0 flex-1 truncate text-xs font-semibold">
+              {headerTitle}
+            </h3>
+            {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
           </div>
           {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
           <Tooltip>
@@ -313,26 +357,16 @@ export function BrowserTab(props: BrowserTabProps) {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="bg-background-secondary relative min-h-0 flex-1">
-          {screenshotSrc ? (
-            <img
-              src={screenshotSrc}
-              alt={session?.title ?? session?.currentUrl ?? "Browser session screenshot"}
-              className="h-full w-full object-contain"
-            />
-          ) : (
+        <BrowserViewport
+          workspaceId={props.workspaceId}
+          session={session}
+          screenshotSrc={screenshotSrc}
+          visibleError={visibleError}
+          onRestart={handleRestartSession}
+          placeholder={
             <BrowserViewerState session={session} isStarting={isStarting} error={visibleError} />
-          )}
-
-          {visibleError && screenshotSrc && (
-            <div className="pointer-events-none absolute inset-x-3 top-3">
-              <div className="bg-background-secondary border-destructive/20 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md">
-                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{visibleError}</span>
-              </div>
-            </div>
-          )}
-        </div>
+          }
+        />
 
         <div className="border-border-light flex max-h-56 min-h-[12rem] flex-col border-t">
           <div className="border-border-light bg-background-secondary flex items-center justify-between border-b px-3 py-2">
@@ -361,6 +395,19 @@ export function BrowserTab(props: BrowserTabProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function BrowserHeaderBadge(props: { badge: { label: string; className: string } }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        props.badge.className
+      )}
+    >
+      {props.badge.label}
+    </span>
   );
 }
 
