@@ -8,6 +8,7 @@ import type {
   BrowserFrameMetadata,
   BrowserInputEvent,
   BrowserSession,
+  BrowserSessionEndReason,
   BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
@@ -90,6 +91,13 @@ function extractCliString(data: unknown, field: string): string | null {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function assertSessionInvariants(session: BrowserSession): void {
+  assert(
+    session.status === "ended" || session.endReason === null,
+    "BrowserSession endReason requires ended status"
+  );
 }
 
 function getStreamRetryDelayMs(attemptNumber: number): number {
@@ -320,6 +328,8 @@ async function runAgentBrowserCliCommand(
   });
 }
 
+type AgentBrowserSessionProbeResult = { ok: true; exists: boolean } | { ok: false; error: string };
+
 function extractCliSessionNames(data: unknown): string[] | null {
   const rawSessions = isRecord(data) && isRecord(data.data) ? data.data.sessions : null;
   if (!Array.isArray(rawSessions)) {
@@ -330,35 +340,51 @@ function extractCliSessionNames(data: unknown): string[] | null {
   return sessions.length === rawSessions.length ? sessions : null;
 }
 
+async function probeAgentBrowserSession(
+  sessionId: string,
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: AgentBrowserCliCommandOptions
+): Promise<AgentBrowserSessionProbeResult> {
+  assert(sessionId.trim().length > 0, "probeAgentBrowserSession requires a non-empty sessionId");
+
+  try {
+    const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
+      inFlightProcesses: options?.inFlightProcesses,
+      spawnFn: options?.spawnFn,
+      resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
+      env: options?.env,
+    });
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    const stdout = result.stdout.trim();
+    if (stdout.length === 0) {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
+
+    try {
+      const parsedOutput: unknown = JSON.parse(stdout);
+      const sessions = extractCliSessionNames(parsedOutput);
+      if (sessions === null) {
+        return { ok: false, error: "Unexpected CLI output" };
+      }
+      return { ok: true, exists: sessions.includes(sessionId) };
+    } catch {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
+  }
+}
+
 export async function hasAgentBrowserSession(
   sessionId: string,
   timeoutMs = CLI_TIMEOUT_MS,
   options?: AgentBrowserCliCommandOptions
 ): Promise<boolean> {
-  assert(sessionId.trim().length > 0, "hasAgentBrowserSession requires a non-empty sessionId");
-
-  const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
-    inFlightProcesses: options?.inFlightProcesses,
-    spawnFn: options?.spawnFn,
-    resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
-    env: options?.env,
-  });
-  if (!result.ok) {
-    return false;
-  }
-
-  const stdout = result.stdout.trim();
-  if (stdout.length === 0) {
-    return false;
-  }
-
-  try {
-    const parsedOutput: unknown = JSON.parse(stdout);
-    const sessions = extractCliSessionNames(parsedOutput);
-    return sessions?.includes(sessionId) ?? false;
-  } catch {
-    return false;
-  }
+  const result = await probeAgentBrowserSession(sessionId, timeoutMs, options);
+  return result.ok ? result.exists : false;
 }
 
 export async function closeAgentBrowserSession(
@@ -509,13 +535,7 @@ export class BrowserSessionBackend {
       // Best-effort shutdown; the session is ending locally regardless.
     }
 
-    this.patchSession({
-      status: "ended",
-      streamState: null,
-      lastFrameMetadata: null,
-      streamErrorMessage: null,
-    });
-    this.options.onEnded(this.options.workspaceId);
+    this.transitionToEnded("agent_closed");
   }
 
   sendInput(input: BrowserInputEvent): { success: boolean; error?: string } {
@@ -584,7 +604,7 @@ export class BrowserSessionBackend {
   private createSession(status: BrowserSession["status"]): BrowserSession {
     const now = new Date().toISOString();
     const runId = `${this.sessionId}-${randomUUID().slice(0, 8)}`;
-    return {
+    const session: BrowserSession = {
       id: runId,
       workspaceId: this.options.workspaceId,
       status,
@@ -595,9 +615,12 @@ export class BrowserSessionBackend {
       streamState: null,
       lastFrameMetadata: null,
       streamErrorMessage: null,
+      endReason: null,
       startedAt: now,
       updatedAt: now,
     };
+    assertSessionInvariants(session);
+    return session;
   }
 
   private createSessionId(): string {
@@ -613,12 +636,17 @@ export class BrowserSessionBackend {
     this.metadataRefreshInFlight = false;
   }
 
-  private async hasExistingSession(): Promise<boolean> {
+  private async inspectExistingSession(): Promise<AgentBrowserSessionProbeResult> {
     // agent-browser 0.20+ removed the old JS daemon helper. Query the vendored CLI instead so
     // Browser tab attach/detach keeps working across package layout changes without launching a page.
-    return await hasAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
+    return await probeAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
       inFlightProcesses: this.inFlightProcesses,
     });
+  }
+
+  private async hasExistingSession(): Promise<boolean> {
+    const result = await this.inspectExistingSession();
+    return result.ok ? result.exists : false;
   }
 
   private emitSessionUpdate(): void {
@@ -626,11 +654,13 @@ export class BrowserSessionBackend {
   }
 
   private patchSession(patch: Partial<BrowserSession>): void {
-    this.session = {
+    const nextSession: BrowserSession = {
       ...this.session,
       ...patch,
       updatedAt: new Date().toISOString(),
     };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
     this.emitSessionUpdate();
   }
 
@@ -698,6 +728,64 @@ export class BrowserSessionBackend {
           ...(input.modifiers != null ? { modifiers: input.modifiers } : {}),
         };
     }
+  }
+
+  private hasTerminalSessionState(): boolean {
+    return this.session.status === "error" || this.session.status === "ended";
+  }
+
+  private transitionToEnded(endReason: BrowserSessionEndReason): void {
+    if (this.session.status === "ended") {
+      return;
+    }
+
+    this.stopBackgroundWork();
+    this.disposed = true;
+    this.killInFlightProcesses();
+
+    const nextSession: BrowserSession = {
+      ...this.session,
+      status: "ended",
+      lastError: null,
+      streamState: null,
+      lastFrameMetadata: null,
+      streamErrorMessage: null,
+      endReason,
+      updatedAt: new Date().toISOString(),
+    };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
+    this.emitSessionUpdate();
+    this.options.onEnded(this.options.workspaceId);
+  }
+
+  private async maybeTransitionToEndedFromDaemonClose(): Promise<boolean> {
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return false;
+    }
+
+    const sessionProbe = await this.inspectExistingSession();
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return false;
+    }
+
+    if (!sessionProbe.ok) {
+      log.debug("BrowserSessionBackend failed to probe session presence during close handling", {
+        workspaceId: this.options.workspaceId,
+        error: sessionProbe.error,
+      });
+      return false;
+    }
+
+    if (!sessionProbe.exists) {
+      log.debug("BrowserSessionBackend lost daemon session after unexpected stream close", {
+        workspaceId: this.options.workspaceId,
+      });
+      return false;
+    }
+
+    await this.refreshNavigationMetadata();
+    return this.session.endReason !== null;
   }
 
   private async startStreamTransport(): Promise<StreamStartupMode> {
@@ -819,13 +907,38 @@ export class BrowserSessionBackend {
           return;
         }
 
-        this.handleUnexpectedStreamClose(closeReason);
+        this.handleUnexpectedStreamClose(closeReason).catch((error) => {
+          this.handleUnexpectedStreamCloseFailure(error, closeReason);
+        });
       });
     });
   }
 
-  private handleUnexpectedStreamClose(error: string): void {
-    if (this.disposed || this.session.status === "error") {
+  private handleUnexpectedStreamCloseFailure(error: unknown, closeReason: string): void {
+    const errorMessage = getErrorMessage(error);
+    log.warn("BrowserSessionBackend failed to classify unexpected stream close", {
+      workspaceId: this.options.workspaceId,
+      error: errorMessage,
+      closeReason,
+    });
+
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return;
+    }
+
+    this.transitionToRestartRequired(closeReason);
+  }
+
+  private async handleUnexpectedStreamClose(error: string): Promise<void> {
+    if (this.disposed || this.session.status === "error" || this.session.status === "ended") {
+      return;
+    }
+
+    if (await this.maybeTransitionToEndedFromDaemonClose()) {
+      return;
+    }
+
+    if (this.disposed || this.hasTerminalSessionState()) {
       return;
     }
 
@@ -856,7 +969,7 @@ export class BrowserSessionBackend {
   }
 
   private async retryStreamConnection(): Promise<void> {
-    if (this.disposed || this.session.status === "error") {
+    if (this.disposed || this.session.status === "error" || this.session.status === "ended") {
       return;
     }
 
@@ -866,7 +979,7 @@ export class BrowserSessionBackend {
       return;
     }
 
-    this.handleUnexpectedStreamClose(result.error);
+    await this.handleUnexpectedStreamClose(result.error);
   }
 
   // restart_required keeps the browser window open but blocks interaction until the user relaunches
@@ -878,6 +991,7 @@ export class BrowserSessionBackend {
       streamState: "restart_required",
       streamErrorMessage: error,
       lastError: error,
+      endReason: null,
     });
   }
 
@@ -926,11 +1040,20 @@ export class BrowserSessionBackend {
         return;
       }
 
-      // Detect external browser closure: the daemon falls back to about:blank after the
+      // Detect browser-session closure: the daemon falls back to about:blank after the
       // controlled window disappears, so only treat it as valid when we were already blank.
       const previousUrl = this.session.currentUrl;
       if (previousUrl !== null && previousUrl !== "about:blank" && nextUrl === "about:blank") {
-        this.transitionToError("Browser session was closed externally");
+        const sessionProbe = await this.inspectExistingSession();
+        if (!sessionProbe.ok) {
+          this.handleMetadataFailure(sessionProbe.error);
+          return;
+        }
+        if (!sessionProbe.exists) {
+          this.transitionToError("Browser session disappeared unexpectedly.");
+          return;
+        }
+        this.transitionToEnded("external_closed");
         return;
       }
 
@@ -1064,7 +1187,9 @@ export class BrowserSessionBackend {
       lastError: errorMessage,
     });
     this.closeCurrentStreamSocket();
-    this.handleUnexpectedStreamClose(errorMessage);
+    this.handleUnexpectedStreamClose(errorMessage).catch((error) => {
+      this.handleUnexpectedStreamCloseFailure(error, errorMessage);
+    });
   }
 
   private transitionToError(error: string): void {
@@ -1075,14 +1200,17 @@ export class BrowserSessionBackend {
     this.stopBackgroundWork();
     const nextStreamState: BrowserStreamState | null =
       this.session.streamState !== null ? "error" : this.session.streamState;
-    this.session = {
+    const nextSession: BrowserSession = {
       ...this.session,
       status: "error",
       lastError: error,
       streamState: nextStreamState,
       streamErrorMessage: nextStreamState !== null ? error : this.session.streamErrorMessage,
+      endReason: null,
       updatedAt: new Date().toISOString(),
     };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
     this.emitSessionUpdate();
     this.options.onError(this.options.workspaceId, error);
   }
