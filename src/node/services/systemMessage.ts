@@ -163,12 +163,13 @@ function buildEnvironmentContext(
   }
 
   if (bestOf && bestOf.total > 1) {
-    // Best-of child workspaces need explicit grounding so they produce one candidate attempt
-    // instead of recursively asking their own child to run another best-of batch.
+    // Keep grouped-task system grounding cache-friendly across sibling runs.
+    // Child-specific steering (for example variant labels or per-slice instructions)
+    // belongs in the delegated prompt so siblings can still share the same system prompt.
     lines = [
       ...lines,
-      `- This workspace is candidate ${bestOf.index + 1} of ${bestOf.total} in a best-of-n batch`,
-      "- Complete only this candidate; do not start another best-of-n batch unless explicitly requested",
+      "- This workspace is part of a grouped sub-agent batch launched by the parent",
+      "- Complete only the task described in the prompt; do not start another grouped task batch unless explicitly requested",
     ];
   }
 

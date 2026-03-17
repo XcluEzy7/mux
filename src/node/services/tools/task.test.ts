@@ -38,7 +38,7 @@ function expectGroupedQueuedOrRunningTaskToolResult(
   const obj = result as Record<string, unknown>;
   expect(obj.status).toBe(expected.status);
   expect(obj.taskIds).toEqual(expected.taskIds);
-  expect(obj.tasks).toEqual(
+  expect(obj.tasks).toMatchObject(
     expected.taskIds.map((taskId) => ({
       taskId,
       status: expected.status,
@@ -152,6 +152,106 @@ describe("task tool", () => {
     expect(bestOfGroups[1]?.groupId).toBe(bestOfGroups[2]?.groupId);
   });
 
+  it("spawns variants with per-variant prompts and labels", async () => {
+    using tempDir = new TestTempDir("test-task-tool-variants-background");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const createArgs: Array<{
+      prompt: string;
+      bestOf?: {
+        groupId: string;
+        index: number;
+        total: number;
+        kind?: string;
+        label?: string;
+      };
+    }> = [];
+    let createCount = 0;
+    const create = mock(
+      (args: {
+        prompt: string;
+        bestOf?: {
+          groupId: string;
+          index: number;
+          total: number;
+          kind?: string;
+          label?: string;
+        };
+      }) => {
+        createArgs.push(args);
+        createCount += 1;
+        return Ok({
+          taskId: `child-task-${createCount}`,
+          kind: "agent" as const,
+          status: "running" as const,
+        });
+      }
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          agentId: "explore",
+          prompt: "Review ${variant} for regressions in ${variant}",
+          title: "Split review",
+          run_in_background: true,
+          variants: ["frontend", "backend"],
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(createArgs.map((args) => args.prompt)).toEqual([
+      "Review frontend for regressions in frontend",
+      "Review backend for regressions in backend",
+    ]);
+    const variantGroupId = createArgs[0]?.bestOf?.groupId;
+    expect(typeof variantGroupId).toBe("string");
+    expect(createArgs[0]?.bestOf).toMatchObject({
+      groupId: variantGroupId,
+      index: 0,
+      total: 2,
+      kind: "variants",
+      label: "frontend",
+    });
+    expect(createArgs[1]?.bestOf).toMatchObject({
+      groupId: variantGroupId,
+      index: 1,
+      total: 2,
+      kind: "variants",
+      label: "backend",
+    });
+    expectGroupedQueuedOrRunningTaskToolResult(result, {
+      status: "running",
+      taskIds: ["child-task-1", "child-task-2"],
+    });
+    const obj = result as {
+      tasks?: Array<{ taskId: string; status: string; groupKind?: string; label?: string }>;
+    };
+    expect(obj.tasks).toEqual([
+      {
+        taskId: "child-task-1",
+        status: "running",
+        groupKind: "variants",
+        label: "frontend",
+      },
+      {
+        taskId: "child-task-2",
+        status: "running",
+        groupKind: "variants",
+        label: "backend",
+      },
+    ]);
+  });
+
   it("keeps grouped metadata when best-of task creation fails after only one candidate", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-single-partial-failure");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -199,7 +299,7 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1"]);
-    expect(obj.tasks).toEqual([{ taskId: "child-task-1", status: "running" }]);
+    expect(obj.tasks).toMatchObject([{ taskId: "child-task-1", status: "running" }]);
     expect(typeof obj.note).toBe("string");
   });
 
@@ -250,7 +350,7 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1", "child-task-2"]);
-    expect(obj.tasks).toEqual([
+    expect(obj.tasks).toMatchObject([
       { taskId: "child-task-1", status: "running" },
       { taskId: "child-task-2", status: "running" },
     ]);
@@ -298,7 +398,7 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(waitForAgentReport).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "completed",
       taskIds: ["child-task-1", "child-task-2"],
       reports: [
@@ -308,6 +408,7 @@ describe("task tool", () => {
           title: "Report child-task-1",
           agentId: "explore",
           agentType: "explore",
+          groupKind: "bestOf",
         },
         {
           taskId: "child-task-2",
@@ -315,6 +416,7 @@ describe("task tool", () => {
           title: "Report child-task-2",
           agentId: "explore",
           agentType: "explore",
+          groupKind: "bestOf",
         },
       ],
     });
@@ -379,18 +481,19 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1", "child-task-2", "child-task-3"]);
-    expect(obj.tasks).toEqual([
-      { taskId: "child-task-1", status: "completed" },
-      { taskId: "child-task-2", status: "running" },
-      { taskId: "child-task-3", status: "queued" },
+    expect(obj.tasks).toMatchObject([
+      { taskId: "child-task-1", status: "completed", groupKind: "bestOf" },
+      { taskId: "child-task-2", status: "running", groupKind: "bestOf" },
+      { taskId: "child-task-3", status: "queued", groupKind: "bestOf" },
     ]);
-    expect(obj.reports).toEqual([
+    expect(obj.reports).toMatchObject([
       {
         taskId: "child-task-1",
         reportMarkdown: "report for child-task-1",
         title: "Report child-task-1",
         agentId: "explore",
         agentType: "explore",
+        groupKind: "bestOf",
       },
     ]);
     expect(typeof obj.note).toBe("string");
