@@ -83,14 +83,32 @@ export function useContextMenuPosition(
     setPosition(null);
   }, []);
 
+  const getContextMenuPositionFromEvent = useCallback(
+    (e: React.MouseEvent): ContextMenuPosition => {
+      // Keyboard-triggered activations (click/contextmenu) can report client
+      // coordinates as 0,0. Anchor those opens to the trigger element so menus
+      // appear next to the control.
+      const isKeyboardActivation =
+        (e.type === "click" && e.detail === 0) || (e.clientX === 0 && e.clientY === 0);
+
+      if (!isKeyboardActivation) {
+        return { x: e.clientX, y: e.clientY };
+      }
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      return { x: rect.right, y: rect.bottom };
+    },
+    []
+  );
+
   const onContextMenu = useCallback(
     (e: React.MouseEvent) => {
       if (!canOpenMenu()) return;
       e.preventDefault();
       e.stopPropagation();
-      openAtPosition({ x: e.clientX, y: e.clientY });
+      openAtPosition(getContextMenuPositionFromEvent(e));
     },
-    [canOpenMenu, openAtPosition]
+    [canOpenMenu, getContextMenuPositionFromEvent, openAtPosition]
   );
 
   const onOpenChange = useCallback((open: boolean) => {
