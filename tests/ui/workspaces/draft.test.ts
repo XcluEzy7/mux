@@ -102,11 +102,116 @@ describeIntegration("Draft workspace behavior", () => {
       fireEvent.click(newChatButton);
 
       // Verify still only 1 draft (reused the empty one)
-      await new Promise((r) => setTimeout(r, 500));
-      const draftsAfterSecondClick = getWorkspaceDraftIds(normalizedProjectPath);
+      await waitFor(
+        () => {
+          const draftsAfterSecondClick = getWorkspaceDraftIds(normalizedProjectPath);
+          expect(draftsAfterSecondClick.length).toBe(1);
+          expect(draftsAfterSecondClick[0]).toBe(firstDraftId);
+        },
+        { timeout: 5_000 }
+      );
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
 
-      expect(draftsAfterSecondClick.length).toBe(1);
-      expect(draftsAfterSecondClick[0]).toBe(firstDraftId);
+  test("draft row is hidden in sidebar when empty", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    const cleanupDom = setupTestDom();
+    updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, null);
+
+    const view = renderApp({ apiClient: env.orpc });
+
+    try {
+      await view.waitForReady();
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
+          );
+          if (!el) throw new Error("Project row not found");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Creation textarea not found");
+        },
+        { timeout: 5_000 }
+      );
+
+      // A draft exists in storage for reuse, but no row appears in the sidebar.
+      const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
+      expect(draftId).toBeTruthy();
+      expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("clicking New Chat before typing reuses hidden draft without showing duplicates", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    const cleanupDom = setupTestDom();
+    updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, null);
+
+    const view = renderApp({ apiClient: env.orpc });
+
+    try {
+      await view.waitForReady();
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+      const projectName = path.basename(normalizedProjectPath);
+
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
+          );
+          if (!el) throw new Error("Project row not found");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Creation textarea not found");
+        },
+        { timeout: 5_000 }
+      );
+
+      const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
+      expect(draftId).toBeTruthy();
+      expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+
+      const newChatButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(`[aria-label="New chat in ${projectName}"]`);
+          if (!btn) throw new Error(`New chat button not found for ${projectName}`);
+          return btn as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(newChatButton);
+
+      await waitFor(
+        () => {
+          expect(getWorkspaceDraftIds(normalizedProjectPath)).toEqual([draftId]);
+          expect(view.container.querySelector("[data-draft-id]")).toBeNull();
+        },
+        { timeout: 5_000 }
+      );
     } finally {
       await cleanupView(view, cleanupDom);
     }
