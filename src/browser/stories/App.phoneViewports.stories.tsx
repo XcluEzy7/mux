@@ -12,7 +12,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { STABLE_TIMESTAMP, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { setupSimpleChatStory } from "./helpers/chatSetup";
@@ -129,8 +129,16 @@ export const IPhone16e: AppStory = {
       ...(appMeta.parameters?.chromatic ?? {}),
       cropToViewport: true,
       modes: {
-        dark: { theme: "dark", viewport: IPHONE_16E, hasTouch: true },
-        light: { theme: "light", viewport: IPHONE_16E, hasTouch: true },
+        "dark-mobile": {
+          ...CHROMATIC_SMOKE_MODES["dark-desktop"],
+          viewport: IPHONE_16E,
+          hasTouch: true,
+        },
+        "light-mobile": {
+          ...CHROMATIC_SMOKE_MODES["light-desktop"],
+          viewport: IPHONE_16E,
+          hasTouch: true,
+        },
       },
     },
   },
