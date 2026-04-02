@@ -602,6 +602,15 @@ export const projects = {
       .passthrough(),
     output: z.void(),
   },
+  setColor: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        color: z.string().nullish(),
+      })
+      .passthrough(),
+    output: z.void(),
+  },
   mcp: {
     list: {
       input: z.object({ projectPath: z.string() }),

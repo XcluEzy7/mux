@@ -28,10 +28,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
 
   if (isCreating) {
     return (
-      <div className="flex items-center gap-1 px-2 py-0.5">
-        <div className="flex h-5 w-5 shrink-0 items-center justify-center">
-          <Plus size={12} className="text-muted/60" />
-        </div>
+      <div className="flex items-center px-2 py-0.5">
         <input
           ref={inputRef}
           type="text"
@@ -47,7 +44,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
           }}
           placeholder="Section name..."
           data-testid="add-section-input"
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none select-text"
+          className="bg-background/50 text-foreground ml-6 min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none select-text"
         />
       </div>
     );

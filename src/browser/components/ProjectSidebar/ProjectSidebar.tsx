@@ -14,13 +14,14 @@ import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, type WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
   getInputAttachmentsKey,
   getInputKey,
+  getWorkspaceLastReadKey,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
 import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
@@ -39,7 +40,11 @@ import {
   KEYBINDS,
 } from "@/browser/utils/ui/keybinds";
 import { useAPI } from "@/browser/contexts/API";
-import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
+import {
+  CUSTOM_EVENTS,
+  getStorageChangeEvent,
+  type CustomEventType,
+} from "@/common/constants/events";
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
@@ -82,7 +87,10 @@ import {
   ChevronRight,
   CircleHelp,
   EllipsisVertical,
+  Folder,
+  FolderOpen,
   KeyRound,
+  Palette,
   Pencil,
   Trash,
   Plus,
@@ -94,7 +102,6 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { SectionHeader } from "../SectionHeader/SectionHeader";
-import { AddSectionButton } from "../AddSectionButton/AddSectionButton";
 import { WorkspaceSectionDropZone } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
@@ -109,6 +116,8 @@ import { getTaskGroupKindFromMetadata } from "@/common/utils/tools/taskGroups";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { HexColorPicker } from "react-colorful";
+import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
@@ -150,11 +159,132 @@ const MuxChatHelpButton: React.FC<{
   );
 };
 
+/**
+ * Subscribe sidebar-level attention derivation to workspace updates.
+ *
+ * Project/section highlighting is computed in this parent component, so it must
+ * re-render for both:
+ * - unread storage writes (localStorage-backed "last read" timestamps)
+ * - attention-relevant workspace transitions (streaming, awaiting question, system errors)
+ */
+interface WorkspaceAttentionSignal {
+  isWorking: boolean;
+  awaitingUserQuestion: boolean;
+  hasSystemError: boolean;
+}
+
+function getWorkspaceAttentionSignal(
+  workspaceStore: WorkspaceStore,
+  workspaceId: string
+): WorkspaceAttentionSignal | null {
+  try {
+    const sidebarState = workspaceStore.getWorkspaceSidebarState(workspaceId);
+    const isWorking =
+      (sidebarState.canInterrupt || sidebarState.isStarting) && !sidebarState.awaitingUserQuestion;
+    return {
+      isWorking,
+      awaitingUserQuestion: sidebarState.awaitingUserQuestion,
+      hasSystemError: sidebarState.lastAbortReason?.reason === "system",
+    };
+  } catch {
+    // Workspace may have been removed while subscriptions are being torn down.
+    return null;
+  }
+}
+
+function didWorkspaceAttentionSignalChange(
+  prev: WorkspaceAttentionSignal | undefined,
+  next: WorkspaceAttentionSignal
+): boolean {
+  if (!prev) {
+    return true;
+  }
+  return (
+    prev.isWorking !== next.isWorking ||
+    prev.awaitingUserQuestion !== next.awaitingUserQuestion ||
+    prev.hasSystemError !== next.hasSystemError
+  );
+}
+
+function useWorkspaceAttentionSubscription(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  workspaceStore: WorkspaceStore
+): void {
+  const [, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const workspaceIds = new Set<string>();
+    const workspaceLastReadKeys = new Set<string>();
+    for (const workspaces of sortedWorkspacesByProject.values()) {
+      for (const workspace of workspaces) {
+        workspaceIds.add(workspace.id);
+        workspaceLastReadKeys.add(getWorkspaceLastReadKey(workspace.id));
+      }
+    }
+
+    if (workspaceIds.size === 0 && workspaceLastReadKeys.size === 0) {
+      return;
+    }
+
+    const bumpVersion = () => {
+      setVersion((currentVersion) => currentVersion + 1);
+    };
+    const attentionSignalsByWorkspaceId = new Map<string, WorkspaceAttentionSignal>();
+    for (const workspaceId of workspaceIds) {
+      const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+      if (signal) {
+        attentionSignalsByWorkspaceId.set(workspaceId, signal);
+      }
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && workspaceLastReadKeys.has(event.key)) {
+        bumpVersion();
+      }
+    };
+
+    const unsubscribeWorkspaceStore = Array.from(workspaceIds.values()).map((workspaceId) =>
+      workspaceStore.subscribeKey(workspaceId, () => {
+        const nextSignal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+        if (!nextSignal) {
+          return;
+        }
+
+        const previousSignal = attentionSignalsByWorkspaceId.get(workspaceId);
+        if (!didWorkspaceAttentionSignalChange(previousSignal, nextSignal)) {
+          return;
+        }
+
+        attentionSignalsByWorkspaceId.set(workspaceId, nextSignal);
+        bumpVersion();
+      })
+    );
+    window.addEventListener("storage", handleStorage);
+    for (const key of workspaceLastReadKeys) {
+      window.addEventListener(getStorageChangeEvent(key), bumpVersion);
+    }
+
+    return () => {
+      for (const unsubscribe of unsubscribeWorkspaceStore) {
+        unsubscribe();
+      }
+      window.removeEventListener("storage", handleStorage);
+      for (const key of workspaceLastReadKeys) {
+        window.removeEventListener(getStorageChangeEvent(key), bumpVersion);
+      }
+    };
+  }, [sortedWorkspacesByProject, workspaceStore]);
+}
+
 // Keep the project header visible while scrolling through long workspace lists.
 // Project rows are also drag handles, so disable text selection to avoid
 // highlighting the whole sidebar before a reorder gesture locks in.
 const PROJECT_ITEM_BASE_CLASS =
-  "sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "group sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
@@ -264,6 +394,8 @@ interface DraftAgentListItemWrapperProps {
   draftId: string;
   draftNumber: number;
   isSelected: boolean;
+  sectionId?: string;
+  onVisibilityChange?: (isVisible: boolean) => void;
   onOpen: () => void;
   onDelete: () => void;
 }
@@ -272,8 +404,32 @@ interface DraftAgentListItemWrapperProps {
 // Prevents constant re-renders while still providing timely feedback.
 const DRAFT_PREVIEW_DEBOUNCE_MS = 1000;
 
+function isDraftVisible(
+  projectPath: string,
+  draftId: string,
+  values?: {
+    draftPrompt?: string;
+    workspaceNameState?: unknown;
+    draftAttachments?: unknown[];
+  }
+): boolean {
+  const scopeId = getDraftScopeId(projectPath, draftId);
+  const draftPrompt = values?.draftPrompt ?? readPersistedState<string>(getInputKey(scopeId), "");
+  const workspaceNameState =
+    values?.workspaceNameState ??
+    readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
+  const draftAttachments =
+    values?.draftAttachments ?? readPersistedState<unknown[]>(getInputAttachmentsKey(scopeId), []);
+
+  const hasTextContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
+  const hasAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0;
+  const hasNameState = workspaceNameState !== null;
+  return hasTextContent || hasAttachments || hasNameState;
+}
+
 function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
+  const onVisibilityChange = props.onVisibilityChange;
 
   const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
     listener: true,
@@ -296,10 +452,17 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
   // so non-empty drafts never become hidden orphans.
   // Uses raw (non-debounced) values so the row appears immediately, while the
   // preview text below still updates at the debounced cadence.
-  const hasTextContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
-  const hasAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0;
-  const hasNameState = workspaceNameState !== null;
-  if (!hasTextContent && !hasAttachments && !hasNameState) {
+  const isVisible = isDraftVisible(props.projectPath, props.draftId, {
+    draftPrompt,
+    workspaceNameState,
+    draftAttachments: Array.isArray(draftAttachments) ? draftAttachments : [],
+  });
+
+  useEffect(() => {
+    onVisibilityChange?.(isVisible);
+  }, [isVisible, onVisibilityChange]);
+
+  if (!isVisible) {
     return null;
   }
 
@@ -316,6 +479,7 @@ function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
       variant="draft"
       projectPath={props.projectPath}
       isSelected={props.isSelected}
+      sectionId={props.sectionId}
       draft={{
         draftId: props.draftId,
         draftNumber: props.draftNumber,
@@ -377,7 +541,7 @@ const ProjectDragLayer: React.FC = () => {
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
-            <ChevronRight className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+            <ChevronRight className="h-4 w-4" />
           </span>
           <div className="flex min-w-0 flex-1 items-center pr-2">
             <span className="text-foreground truncate text-sm font-medium">{basename}</span>
@@ -487,6 +651,18 @@ interface ProjectSidebarProps {
   workspaceRecency: Record<string, number>;
 }
 
+function didUntrackedPathSetChange(
+  acknowledgedUntrackedPaths: string[],
+  latestUntrackedPaths: string[]
+): boolean {
+  if (acknowledgedUntrackedPaths.length !== latestUntrackedPaths.length) {
+    return true;
+  }
+
+  const acknowledgedSet = new Set(acknowledgedUntrackedPaths);
+  return latestUntrackedPaths.some((path) => !acknowledgedSet.has(path));
+}
+
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   collapsed,
   onToggleCollapsed,
@@ -513,6 +689,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     deleteWorkspaceDraft,
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
+  useWorkspaceAttentionSubscription(sortedWorkspacesByProject, workspaceStore);
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
@@ -525,6 +702,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     openProjectCreateModal: onAddProject,
     removeProject: onRemoveProject,
     updateDisplayName,
+    updateColor: updateProjectColor,
     createSection,
     updateSection,
     removeSection,
@@ -539,6 +717,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
+  const NEW_SUB_FOLDER_PLACEHOLDER_NAME = "New sub-folder";
   const projectListScrollRef = useRef<HTMLDivElement | null>(null);
   const mobileScrollTopRef = useRef(0);
   const wasCollapsedRef = useRef(collapsed);
@@ -721,6 +900,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [draftVisibilityByProject, setDraftVisibilityByProject] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
   const workspaceArchiveError = usePopoverError();
   const workspaceForkError = usePopoverError();
   const workspaceStopRuntimeError = usePopoverError();
@@ -743,10 +925,38 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
 
+  const handleDraftVisibilityChange = useCallback(
+    (projectPath: string, draftId: string, isVisible: boolean) => {
+      setDraftVisibilityByProject((prev) => {
+        const existing = prev[projectPath] ?? {};
+        if (existing[draftId] === isVisible) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [projectPath]: {
+            ...existing,
+            [draftId]: isVisible,
+          },
+        };
+      });
+    },
+    []
+  );
+
   const projectContextMenu = useContextMenuPosition({ longPress: true });
   const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
   const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
   const [editingProjectDisplayName, setEditingProjectDisplayName] = useState("");
+  const [autoEditingSection, setAutoEditingSection] = useState<{
+    projectPath: string;
+    sectionId: string;
+  } | null>(null);
+  const [showProjectColorPicker, setShowProjectColorPicker] = useState(false);
+  const [projectColorHexInput, setProjectColorHexInput] = useState("");
+  const [projectColorPickerValue, setProjectColorPickerValue] = useState("#000000");
+  const [projectColorPickerDirty, setProjectColorPickerDirty] = useState(false);
   const skipNextProjectNameBlurCommitRef = useRef(false);
 
   // Use functional update to avoid stale closure issues when clicking rapidly
@@ -771,15 +981,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       ...prev,
       [key]: !prev[key],
     }));
-  };
-
-  const handleCreateSection = async (projectPath: string, name: string) => {
-    const result = await createSection(projectPath, name);
-    if (result.success) {
-      // Auto-expand the new section
-      const key = getSectionExpandedKey(projectPath, result.data.id);
-      setExpandedSections((prev) => ({ ...prev, [key]: true }));
-    }
   };
 
   const handleForkWorkspace = useCallback(
@@ -888,6 +1089,38 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           return;
         }
         if (!result.success) {
+          if (acknowledgedUntrackedPaths != null) {
+            // Archive may fail if new untracked files appear between confirmation and capture.
+            // Re-run preflight so we can reopen the modal with the latest paths.
+            const preflight = await preflightArchiveWorkspace(workspaceId);
+            if (preflight.success && preflight.data?.kind === "confirm-lossy-untracked-files") {
+              const pathsChanged = didUntrackedPathSetChange(
+                acknowledgedUntrackedPaths,
+                preflight.data.paths
+              );
+              if (pathsChanged) {
+                const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+                const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+                setArchiveConfirmation({
+                  workspaceId,
+                  displayTitle,
+                  buttonElement,
+                  untrackedPaths: preflight.data.paths,
+                  isStreaming: (() => {
+                    const aggregator = workspaceStore.getAggregator(workspaceId);
+                    if (!aggregator) return false;
+                    const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+                    const isStarting =
+                      aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+                    const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+                    return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+                  })(),
+                });
+                return;
+              }
+            }
+          }
+
           const error = result.error ?? "Failed to archive chat";
           // Archive failures can be long-lived workflow errors (for example, untracked-file safety
           // checks) that users should notice near the active workspace content, not pinned beside a
@@ -904,7 +1137,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         });
       }
     },
-    [onArchiveWorkspace, workspaceArchiveError, workspaceStore]
+    [onArchiveWorkspace, preflightArchiveWorkspace, workspaceArchiveError, workspaceStore]
   );
 
   const hasActiveStream = useCallback(
@@ -917,6 +1150,43 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
     },
     [workspaceStore]
+  );
+
+  const workspaceHasAttention = useCallback(
+    (workspace: FrontendWorkspaceMetadata) => {
+      const workspaceId = workspace.id;
+      const aggregator = workspaceStore.getAggregator(workspaceId);
+      const hasActiveStreams = aggregator ? aggregator.getActiveStreams().length > 0 : false;
+      const isStarting = aggregator?.getPendingStreamStartTime() != null && !hasActiveStreams;
+      const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
+      const isWorking = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+      const hasError = aggregator?.getLastAbortReason()?.reason === "system";
+      const isRemoving = workspace.isRemoving === true;
+      const isArchiving = archivingWorkspaceIds.has(workspaceId);
+      const isInitializing = workspace.isInitializing === true;
+      const isSelected = selectedWorkspace?.workspaceId === workspaceId;
+      const recencyTimestamp = workspaceRecency[workspaceId] ?? null;
+      const lastReadTimestamp = readPersistedState<number | null>(
+        getWorkspaceLastReadKey(workspaceId),
+        null
+      );
+      const isUnread =
+        !isSelected &&
+        recencyTimestamp !== null &&
+        lastReadTimestamp !== null &&
+        recencyTimestamp > lastReadTimestamp;
+
+      return (
+        isWorking ||
+        awaitingUserQuestion ||
+        hasError ||
+        isInitializing ||
+        isRemoving ||
+        isArchiving ||
+        isUnread
+      );
+    },
+    [archivingWorkspaceIds, selectedWorkspace?.workspaceId, workspaceRecency, workspaceStore]
   );
 
   const handleArchiveWorkspace = useCallback(
@@ -1077,8 +1347,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleRemoveSection = async (
     projectPath: string,
     sectionId: string,
-    buttonElement: HTMLElement
+    buttonElement?: HTMLElement
   ) => {
+    // Capture the anchor location up front because the section action menu unmounts its
+    // button immediately after click; failures still need stable error placement.
+    const anchor =
+      buttonElement != null
+        ? (() => {
+            const buttonRect = buttonElement.getBoundingClientRect();
+            return {
+              top: buttonRect.top + window.scrollY,
+              left: buttonRect.right + 10,
+            };
+          })()
+        : undefined;
+
     // removeSection unsections every workspace in the project (including archived),
     // so confirmation needs to count from the full project config.
     const workspacesInSection = (userProjects.get(projectPath)?.workspaces ?? []).filter(
@@ -1100,11 +1383,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     const result = await removeSection(projectPath, sectionId);
     if (!result.success) {
       const error = result.error ?? "Failed to remove section";
-      const rect = buttonElement.getBoundingClientRect();
-      const anchor = {
-        top: rect.top + window.scrollY,
-        left: rect.right + 10,
-      };
       sectionRemoveError.showError(sectionId, error, anchor);
     }
   };
@@ -1126,6 +1404,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const closeProjectContextMenu = useCallback(() => {
     projectContextMenu.close();
     setProjectMenuTargetPath(null);
+    setShowProjectColorPicker(false);
+    setProjectColorPickerDirty(false);
   }, [projectContextMenu]);
 
   const handleProjectMenuOpenChange = useCallback(
@@ -1133,6 +1413,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       projectContextMenu.onOpenChange(open);
       if (!open) {
         setProjectMenuTargetPath(null);
+        setShowProjectColorPicker(false);
+        setProjectColorPickerDirty(false);
       }
     },
     [projectContextMenu]
@@ -1141,6 +1423,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleOpenProjectMenu = useCallback(
     (event: React.MouseEvent, projectPath: string) => {
       setProjectMenuTargetPath(projectPath);
+      setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
       projectContextMenu.onContextMenu(event);
     },
     [projectContextMenu]
@@ -1149,6 +1433,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleProjectContextMenuTouchStart = useCallback(
     (event: React.TouchEvent, projectPath: string) => {
       setProjectMenuTargetPath(projectPath);
+      setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
       projectContextMenu.touchHandlers.onTouchStart(event);
     },
     [projectContextMenu]
@@ -1245,6 +1531,95 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [closeProjectContextMenu, handleRequestProjectRemoval, projectMenuTargetPath]
   );
 
+  const handleProjectMenuAddSubFolder = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    const targetProjectPath = projectMenuTargetPath;
+    closeProjectContextMenu();
+    void (async () => {
+      const result = await createSection(targetProjectPath, NEW_SUB_FOLDER_PLACEHOLDER_NAME);
+      if (!result.success) {
+        return;
+      }
+      setExpandedProjectsArray((prev) => {
+        const expanded = Array.isArray(prev) ? prev : [];
+        if (expanded.includes(targetProjectPath)) {
+          return expanded;
+        }
+        return [...expanded, targetProjectPath];
+      });
+      // New sub-folders should immediately open inline rename and stay visible.
+      const key = getSectionExpandedKey(targetProjectPath, result.data.id);
+      setExpandedSections((prev) => ({ ...prev, [key]: true }));
+      setAutoEditingSection({ projectPath: targetProjectPath, sectionId: result.data.id });
+    })();
+  }, [
+    closeProjectContextMenu,
+    createSection,
+    projectMenuTargetPath,
+    setExpandedProjectsArray,
+    setExpandedSections,
+  ]);
+
+  const projectMenuTargetConfig = projectMenuTargetPath
+    ? (userProjects.get(projectMenuTargetPath) ?? null)
+    : null;
+  const projectMenuResolvedColor = resolveSectionColor(projectMenuTargetConfig?.color);
+
+  // HexColorPicker emits on every drag tick; debounce project color writes so we
+  // don't flood IPC + project refreshes while the user drags through hues.
+  const debouncedProjectColorPickerValue = useDebouncedValue(projectColorPickerValue, 150);
+
+  const handleProjectMenuColorClick = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+    setShowProjectColorPicker((prev) => {
+      const next = !prev;
+      if (next) {
+        setProjectColorHexInput(projectMenuResolvedColor);
+        setProjectColorPickerValue(projectMenuResolvedColor);
+      }
+      setProjectColorPickerDirty(false);
+      return next;
+    });
+  }, [projectMenuResolvedColor, projectMenuTargetPath]);
+
+  const handleProjectColorChange = useCallback(
+    async (color: string) => {
+      if (!projectMenuTargetPath) {
+        return;
+      }
+      const result = await updateProjectColor(projectMenuTargetPath, color);
+      if (!result.success) {
+        console.error("Failed to update project color:", result.error);
+      }
+    },
+    [projectMenuTargetPath, updateProjectColor]
+  );
+
+  useEffect(() => {
+    if (!showProjectColorPicker || !projectColorPickerDirty) {
+      return;
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(debouncedProjectColorPickerValue)) {
+      return;
+    }
+    if (debouncedProjectColorPickerValue === projectMenuResolvedColor) {
+      return;
+    }
+
+    void handleProjectColorChange(debouncedProjectColorPickerValue);
+  }, [
+    debouncedProjectColorPickerValue,
+    handleProjectColorChange,
+    projectColorPickerDirty,
+    projectMenuResolvedColor,
+    showProjectColorPicker,
+  ]);
+
   // UI preference: project order persists in localStorage
   const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
 
@@ -1285,10 +1660,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
   const multiProjectWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
+  const workspaceAttentionById = new Map<string, boolean>();
 
   for (const [projectPath, workspaces] of sortedWorkspacesByProject) {
     const singleProjectWorkspaces: FrontendWorkspaceMetadata[] = [];
     for (const workspace of workspaces) {
+      workspaceAttentionById.set(workspace.id, workspaceHasAttention(workspace));
       if (isMultiProject(workspace)) {
         if (multiProjectWorkspacesEnabled) {
           multiProjectWorkspacesById.set(workspace.id, workspace);
@@ -1411,22 +1788,28 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 className="flex-1 overflow-x-hidden overflow-y-auto"
               >
                 {multiProjectWorkspaces.length > 0 && (
-                  <div className="border-hover border-b">
+                  <div>
                     <div className={PROJECT_ITEM_BASE_CLASS}>
                       <button
                         onClick={() => toggleProject(MULTI_PROJECT_SIDEBAR_SECTION_ID)}
                         aria-label={`${isMultiProjectSectionExpanded ? "Collapse" : "Expand"} multi-project workspaces`}
                         className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                       >
-                        <ChevronRight
-                          className="h-4 w-4 shrink-0 transition-transform duration-200"
-                          strokeWidth={1.8}
-                          style={{
-                            transform: isMultiProjectSectionExpanded
-                              ? "rotate(90deg)"
-                              : "rotate(0deg)",
-                          }}
-                        />
+                        <span className="relative flex h-4 w-4 items-center justify-center">
+                          <ChevronRight
+                            className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
+                            style={{
+                              transform: isMultiProjectSectionExpanded
+                                ? "rotate(90deg)"
+                                : "rotate(0deg)",
+                            }}
+                          />
+                          {isMultiProjectSectionExpanded ? (
+                            <FolderOpen className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
+                          ) : (
+                            <Folder className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
+                          )}
+                        </span>
                       </button>
                       <div className="flex min-w-0 flex-1 items-center pr-2">
                         <span className="text-foreground truncate text-sm font-medium">
@@ -1490,6 +1873,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   sortedProjectPaths.map((projectPath) => {
                     const config = userProjects.get(projectPath);
                     if (!config) return null;
+                    const projectFolderColor = config.color
+                      ? resolveSectionColor(config.color)
+                      : undefined;
                     const projectName = getProjectNameFromPath(projectPath);
                     const sanitizedProjectId =
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
@@ -1498,9 +1884,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const displayProjectName =
                       config.displayName ?? getProjectFallbackLabel(projectPath);
                     const isEditingProjectDisplayName = editingProjectPath === projectPath;
+                    const projectWorkspaces =
+                      singleProjectWorkspacesByProject.get(projectPath) ?? [];
+                    const projectAgentCount = projectWorkspaces.length;
+                    const projectHasAttention = projectWorkspaces.some(
+                      (workspace) => workspaceAttentionById.get(workspace.id) === true
+                    );
 
                     return (
-                      <div key={projectPath} className="border-hover border-b">
+                      <div key={projectPath}>
                         <DraggableProjectItem
                           projectPath={projectPath}
                           onReorder={handleReorder}
@@ -1546,11 +1938,28 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             data-project-path={projectPath}
                             className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
-                            <ChevronRight
-                              className="h-4 w-4 shrink-0 transition-transform duration-200"
-                              strokeWidth={1.8}
-                              style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
-                            />
+                            {/* Mobile: nudge folder icon left so it visually centers above connector line. */}
+                            <span className="relative flex h-4 w-4 -translate-x-2 items-center justify-center md:translate-x-0">
+                              <ChevronRight
+                                className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
+                                style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                              />
+                              {isExpanded ? (
+                                <FolderOpen
+                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
+                                />
+                              ) : (
+                                <Folder
+                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
+                                />
+                              )}
+                            </span>
                           </button>
                           <div
                             className="flex min-w-0 flex-1 items-center pr-2"
@@ -1597,9 +2006,26 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }}
                                   />
                                 ) : (
-                                  <div className="text-muted-dark flex gap-2 truncate text-sm">
-                                    <span className="text-foreground truncate font-medium">
+                                  <div className="text-muted-dark flex min-w-0 items-center gap-1.5 text-sm">
+                                    <span
+                                      className={cn(
+                                        "min-w-0 flex-1 truncate font-medium",
+                                        projectHasAttention
+                                          ? "text-content-primary"
+                                          : "text-content-secondary"
+                                      )}
+                                    >
                                       {displayProjectName}
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        "shrink-0",
+                                        projectHasAttention
+                                          ? "text-content-primary"
+                                          : "text-content-secondary"
+                                      )}
+                                    >
+                                      ({projectAgentCount})
                                     </span>
                                   </div>
                                 )}
@@ -1648,13 +2074,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             id={workspaceListId}
                             role="region"
                             aria-label={`Workspaces for ${projectName}`}
-                            className="pt-1"
+                            className="relative pt-1"
                           >
+                            <div
+                              aria-hidden="true"
+                              className="bg-border pointer-events-none absolute top-1 bottom-0 left-4.5 w-px"
+                              style={
+                                projectFolderColor
+                                  ? { backgroundColor: projectFolderColor }
+                                  : undefined
+                              }
+                            />
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 
-                              const allWorkspaces =
-                                singleProjectWorkspacesByProject.get(projectPath) ?? [];
+                              const allWorkspaces = projectWorkspaces;
 
                               const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
                               const activeDraftIds = new Set(
@@ -1687,6 +2121,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const sortedDrafts = draftsForProject
                                 .slice()
                                 .sort((a, b) => b.createdAt - a.createdAt);
+                              const draftVisibilityForProject =
+                                draftVisibilityByProject[projectPath] ?? {};
+                              const hasVisibleDrafts = sortedDrafts.some((draft) => {
+                                const reactiveVisibility = draftVisibilityForProject[draft.draftId];
+                                return (
+                                  reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId)
+                                );
+                              });
+                              const projectHasNoAgentsOrDrafts =
+                                projectWorkspaces.length === 0 && !hasVisibleDrafts;
                               const draftNumberById = new Map(
                                 sortedDrafts.map(
                                   (draft, index) => [draft.draftId, index + 1] as const
@@ -1726,7 +2170,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 sectionId?: string,
                                 rowRenderMetaOverride?: AgentRowRenderMeta | null,
                                 depthOverride?: number,
-                                keyOverride?: string
+                                keyOverride?: string,
+                                subAgentConnectorLayout?: "default" | "task-group-member"
                               ) => {
                                 const rowRenderMeta =
                                   rowRenderMetaOverride === undefined
@@ -1758,6 +2203,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }
                                     sectionId={sectionId}
                                     rowRenderMeta={rowRenderMeta}
+                                    subAgentConnectorLayout={subAgentConnectorLayout}
                                     completedChildrenExpanded={
                                       expandedCompletedSubAgents[metadata.id] ?? false
                                     }
@@ -1950,6 +2396,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       groupId={taskGroupId}
                                       title={groupTitle}
                                       kind={groupKind}
+                                      sectionId={sectionId}
                                       depth={depth}
                                       totalCount={totalCount}
                                       visibleCount={sortedVisibleMembers.length}
@@ -1973,9 +2420,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         renderWorkspace(
                                           member,
                                           sectionId,
-                                          null,
+                                          rowMetaByWorkspaceId.get(member.id) ?? null,
                                           depth + 1,
-                                          `task-group-member:${taskGroupId}:${member.id}`
+                                          `task-group-member:${taskGroupId}:${member.id}`,
+                                          "task-group-member"
                                         )
                                       );
                                     }
@@ -2011,6 +2459,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     draftId={draft.draftId}
                                     draftNumber={draftNumber}
                                     isSelected={isSelected}
+                                    sectionId={sectionId ?? undefined}
+                                    onVisibilityChange={(isVisible) => {
+                                      handleDraftVisibilityChange(
+                                        projectPath,
+                                        draft.draftId,
+                                        isVisible
+                                      );
+                                    }}
                                     onOpen={() =>
                                       handleOpenWorkspaceDraft(
                                         projectPath,
@@ -2235,14 +2691,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             : `Expand workspaces older than ${thresholdLabel}`
                                         }
                                         aria-expanded={isTierExpanded}
-                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center gap-1 border-t border-none bg-transparent px-3 py-2 pl-7 text-xs font-medium transition-all duration-150 hover:bg-white/3"
                                       >
-                                        <div className="flex items-center gap-1.5">
-                                          <span>Older than {thresholdLabel}</span>
-                                          <span className="text-dim font-normal">
-                                            ({displayCount})
-                                          </span>
-                                        </div>
                                         <span
                                           className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
                                           style={{
@@ -2251,11 +2701,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                               : "rotate(0deg)",
                                           }}
                                         >
-                                          <ChevronRight
-                                            className="h-4 w-4 shrink-0"
-                                            strokeWidth={1.8}
-                                          />
+                                          <ChevronRight className="h-4 w-4" />
                                         </span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span>Older than {thresholdLabel}</span>
+                                          <span className="text-dim font-normal">
+                                            ({displayCount})
+                                          </span>
+                                        </div>
                                       </button>
                                       {isTierExpanded && (
                                         <>
@@ -2353,6 +2806,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const sectionAllWorkspaces =
                                   allBySectionIdForNormalRendering.get(section.id) ?? [];
                                 const sectionDrafts = draftsBySectionId.get(section.id) ?? [];
+                                const sectionHasPromotedAttention = sectionDrafts.some((draft) => {
+                                  const promotedMetadata = activeDraftPromotions[draft.draftId];
+                                  return promotedMetadata
+                                    ? workspaceAttentionById.get(promotedMetadata.id) === true
+                                    : false;
+                                });
+                                const sectionHasAttention =
+                                  sectionAllWorkspaces.some(
+                                    (workspace) => workspaceAttentionById.get(workspace.id) === true
+                                  ) || sectionHasPromotedAttention;
 
                                 const sectionExpandedKey = getSectionExpandedKey(
                                   projectPath,
@@ -2360,6 +2823,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                                 const isSectionExpanded =
                                   expandedSections[sectionExpandedKey] ?? true;
+                                const shouldAutoEditSection =
+                                  autoEditingSection?.projectPath === projectPath &&
+                                  autoEditingSection?.sectionId === section.id;
 
                                 return (
                                   <DraggableSection
@@ -2380,6 +2846,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         workspaceCount={
                                           sectionWorkspaces.length + sectionDrafts.length
                                         }
+                                        hasAttention={sectionHasAttention}
                                         onToggleExpand={() =>
                                           toggleSection(projectPath, section.id)
                                         }
@@ -2388,16 +2855,40 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           handleAddWorkspace(projectPath, section.id);
                                         }}
                                         onRename={(name) => {
+                                          if (shouldAutoEditSection) {
+                                            setAutoEditingSection(null);
+                                          }
                                           void updateSection(projectPath, section.id, { name });
                                         }}
                                         onChangeColor={(color) => {
                                           void updateSection(projectPath, section.id, { color });
                                         }}
-                                        onDelete={(e) => {
+                                        autoStartEditing={shouldAutoEditSection}
+                                        onAutoCreateAbandon={
+                                          shouldAutoEditSection
+                                            ? () => {
+                                                void (async () => {
+                                                  setAutoEditingSection(null);
+                                                  await handleRemoveSection(
+                                                    projectPath,
+                                                    section.id
+                                                  );
+                                                })();
+                                              }
+                                            : undefined
+                                        }
+                                        onAutoCreateRenameCancel={
+                                          shouldAutoEditSection
+                                            ? () => {
+                                                setAutoEditingSection(null);
+                                              }
+                                            : undefined
+                                        }
+                                        onDelete={(anchorEl) => {
                                           void handleRemoveSection(
                                             projectPath,
                                             section.id,
-                                            e.currentTarget
+                                            anchorEl
                                           );
                                         }}
                                       />
@@ -2416,7 +2907,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             )
                                           ) : sectionDrafts.length === 0 ? (
                                             <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                              No workspaces in this section
+                                              No chats in this sub-folder
                                             </div>
                                           ) : null}
                                         </div>
@@ -2428,6 +2919,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                               return (
                                 <>
+                                  {projectHasNoAgentsOrDrafts && (
+                                    <div className="text-content-disabled py-2 pl-12 text-xs">
+                                      Empty
+                                    </div>
+                                  )}
                                   {/* Unsectioned workspaces first - always show drop zone when sections exist */}
                                   {sections.length > 0 ? (
                                     <WorkspaceSectionDropZone
@@ -2446,7 +2942,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         )
                                       ) : unsectionedDrafts.length === 0 ? (
                                         <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                          No unsectioned workspaces
+                                          No unsectioned chats
                                         </div>
                                       ) : null}
                                     </WorkspaceSectionDropZone>
@@ -2465,13 +2961,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   {/* Sections */}
                                   {sections.map(renderSection)}
-
-                                  {/* Add Section button */}
-                                  <AddSectionButton
-                                    onCreateSection={(name) => {
-                                      void handleCreateSection(projectPath, name);
-                                    }}
-                                  />
                                 </>
                               );
                             })()}
@@ -2504,6 +2993,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               }}
             />
             <PositionedMenuItem
+              icon={<Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Add sub-folder"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuAddSubFolder();
+              }}
+            />
+            <PositionedMenuItem
               icon={<KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
               label="Manage secrets"
               disabled={!hasProjectMenuTarget}
@@ -2511,6 +3008,64 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 handleProjectMenuManageSecrets();
               }}
             />
+            <PositionedMenuItem
+              icon={<Palette className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Change color"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuColorClick();
+              }}
+            />
+            {showProjectColorPicker && hasProjectMenuTarget && (
+              <div className="bg-background border-border mx-1 my-1 rounded border p-2">
+                <div className="mb-2 grid grid-cols-5 gap-1">
+                  {SECTION_COLOR_PALETTE.map(([name, color]) => (
+                    <button
+                      key={color}
+                      onClick={() => {
+                        void handleProjectColorChange(color);
+                        setProjectColorHexInput(color);
+                        setProjectColorPickerValue(color);
+                        setProjectColorPickerDirty(false);
+                        setShowProjectColorPicker(false);
+                      }}
+                      className={cn(
+                        "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
+                        projectMenuResolvedColor === color ? "border-white" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: color }}
+                      aria-label={`Set project color to ${name}`}
+                    />
+                  ))}
+                </div>
+                <div className="section-color-picker">
+                  <HexColorPicker
+                    color={projectColorPickerValue}
+                    onChange={(newColor) => {
+                      setProjectColorHexInput(newColor);
+                      setProjectColorPickerValue(newColor);
+                      setProjectColorPickerDirty(true);
+                    }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={projectColorHexInput}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setProjectColorHexInput(value);
+                      if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                        setProjectColorPickerValue(value);
+                        setProjectColorPickerDirty(false);
+                        void handleProjectColorChange(value);
+                      }
+                    }}
+                    className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
+                  />
+                </div>
+              </div>
+            )}
             <Separator />
             <PositionedMenuItem
               icon={<Trash className="h-4 w-4 shrink-0" strokeWidth={1.8} />}

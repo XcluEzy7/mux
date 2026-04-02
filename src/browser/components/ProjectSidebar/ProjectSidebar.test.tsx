@@ -1,14 +1,16 @@
 import "../../../../tests/ui/dom";
 
-import { type PropsWithChildren } from "react";
+import { type ComponentProps, type PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
+import * as ReactColorfulModule from "react-colorful";
 import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import * as MuxLogoLightModule from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
+import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
@@ -40,6 +42,7 @@ import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import * as AgentListItemModule from "../AgentListItem/AgentListItem";
 import * as PositionedMenuModule from "../PositionedMenu/PositionedMenu";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import ProjectSidebar from "./ProjectSidebar";
 
@@ -90,7 +93,11 @@ interface ArchivePreflightActionResult {
 }
 
 interface MockAgentListItemProps {
-  metadata: FrontendWorkspaceMetadata;
+  metadata?: FrontendWorkspaceMetadata;
+  draft?: {
+    draftId: string;
+    title?: string;
+  };
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
   completedChildrenExpanded?: boolean;
@@ -98,9 +105,20 @@ interface MockAgentListItemProps {
   onArchiveWorkspace?: (workspaceId: string, button: HTMLElement) => Promise<void>;
 }
 
+type HexColorPickerProps = ComponentProps<typeof ReactColorfulModule.HexColorPicker>;
+
 let latestArchiveWorkspaceHandler:
   | ((workspaceId: string, button: HTMLElement) => Promise<void>)
   | null = null;
+let latestArchiveConfirmationModalProps: {
+  isOpen: boolean;
+  title: string;
+  description?: string;
+  warning?: string;
+  confirmLabel?: string;
+  onConfirm: () => void | Promise<void>;
+  onCancel: () => void;
+} | null = null;
 let preflightArchiveWorkspaceMock = mock(
   (_workspaceId: string): Promise<ArchivePreflightActionResult> => resolveArchivePreflight()
 );
@@ -111,6 +129,7 @@ let archiveWorkspaceActionMock = mock(
   ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
 );
 let settingsOpenMock = mock(() => undefined);
+let confirmDialogMock = mock(() => Promise.resolve(true));
 let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
@@ -145,6 +164,7 @@ function createProjectContextValue(
     getSecrets: () => Promise.resolve([]),
     updateSecrets: () => Promise.resolve(),
     updateDisplayName: () => resolveVoidResult(),
+    updateColor: () => resolveVoidResult(),
     createSection: () =>
       Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
     updateSection: () => resolveVoidResult(),
@@ -172,7 +192,9 @@ function installProjectSidebarTestDoubles() {
       _options?: { acknowledgedUntrackedPaths?: string[] }
     ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
   );
+  confirmDialogMock = mock(() => Promise.resolve(true));
   latestArchiveWorkspaceHandler = null;
+  latestArchiveConfirmationModalProps = null;
   const fallbackPopoverError = {
     error: null,
     showError: mock(() => undefined),
@@ -221,6 +243,17 @@ function installProjectSidebarTestDoubles() {
     currentOffset: null,
   })) as unknown as typeof ReactDndModule.useDragLayer);
   spyOn(ReactDndHtml5BackendModule, "getEmptyImage").mockImplementation(() => new Image());
+  spyOn(ReactColorfulModule, "HexColorPicker").mockImplementation(((props: HexColorPickerProps) => (
+    <button
+      type="button"
+      data-testid="hex-color-picker"
+      onClick={() => {
+        props.onChange?.("#123456");
+      }}
+    >
+      mock color picker
+    </button>
+  )) as typeof ReactColorfulModule.HexColorPicker);
 
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
   spyOn(ThemeContextModule, "useTheme").mockImplementation(() => ({
@@ -238,7 +271,7 @@ function installProjectSidebarTestDoubles() {
     retry: () => undefined,
   }));
   spyOn(ConfirmDialogContextModule, "useConfirmDialog").mockImplementation(() => ({
-    confirm: () => Promise.resolve(true),
+    confirm: confirmDialogMock,
   }));
   spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => projectContextValue);
   spyOn(RouterContextModule, "useRouter").mockImplementation(() => ({
@@ -303,6 +336,7 @@ function installProjectSidebarTestDoubles() {
       ({
         getWorkspaceMetadata: () => undefined,
         getAggregator: () => undefined,
+        subscribeKey: () => () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
 
@@ -323,25 +357,27 @@ function installProjectSidebarTestDoubles() {
   spyOn(ConfirmationModalModule, "ConfirmationModal").mockImplementation(((props: {
     isOpen: boolean;
     title: string;
-    description?: React.ReactNode;
-    warning?: React.ReactNode;
+    description?: string;
+    warning?: string;
     confirmLabel?: string;
-    onConfirm: () => void;
+    onConfirm: () => void | Promise<void>;
     onCancel: () => void;
-  }) =>
-    props.isOpen ? (
+  }) => {
+    latestArchiveConfirmationModalProps = props;
+    return props.isOpen ? (
       <div data-testid="archive-confirmation-modal">
         <div>{props.title}</div>
-        {props.description}
-        {props.warning}
-        <button type="button" onClick={props.onConfirm}>
+        {props.description ? <div>{props.description}</div> : null}
+        {props.warning ? <div>{props.warning}</div> : null}
+        <button type="button" onClick={() => void props.onConfirm()}>
           {props.confirmLabel ?? "Confirm"}
         </button>
         <button type="button" onClick={props.onCancel}>
           Cancel
         </button>
       </div>
-    ) : null) as unknown as typeof ConfirmationModalModule.ConfirmationModal);
+    ) : null;
+  }) as unknown as typeof ConfirmationModalModule.ConfirmationModal);
   spyOn(ProjectDeleteConfirmationModalModule, "ProjectDeleteConfirmationModal").mockImplementation(
     ((props: {
       isOpen: boolean;
@@ -380,20 +416,31 @@ function installProjectSidebarTestDoubles() {
   spyOn(AgentListItemModule, "AgentListItem").mockImplementation(((
     props: MockAgentListItemProps
   ) => {
+    if (props.draft) {
+      return (
+        <div data-testid={`draft-item-${props.draft.draftId}`}>{props.draft.title ?? "Draft"}</div>
+      );
+    }
+
+    if (!props.metadata) {
+      return null;
+    }
+    const metadata = props.metadata;
+
     const hasCompletedChildren =
       (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
       (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
 
     const displayTitle =
-      props.metadata.bestOf?.kind === "variants" && props.metadata.bestOf.label
-        ? `${props.metadata.bestOf.label} · ${props.metadata.title ?? props.metadata.name}`
-        : (props.metadata.title ?? props.metadata.name);
+      metadata.bestOf?.kind === "variants" && metadata.bestOf.label
+        ? `${metadata.bestOf.label} · ${metadata.title ?? metadata.name}`
+        : (metadata.title ?? metadata.name);
 
     latestArchiveWorkspaceHandler = props.onArchiveWorkspace ?? null;
 
     return (
       <div
-        data-testid={agentItemTestId(props.metadata.id)}
+        data-testid={agentItemTestId(metadata.id)}
         data-depth={String(props.depth ?? -1)}
         data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
         data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
@@ -402,8 +449,8 @@ function installProjectSidebarTestDoubles() {
         {hasCompletedChildren && props.onToggleCompletedChildren ? (
           <button
             type="button"
-            aria-label={toggleButtonLabel(props.metadata.id)}
-            onClick={() => props.onToggleCompletedChildren?.(props.metadata.id)}
+            aria-label={toggleButtonLabel(metadata.id)}
+            onClick={() => props.onToggleCompletedChildren?.(metadata.id)}
           >
             Toggle completed children
           </button>
@@ -411,9 +458,9 @@ function installProjectSidebarTestDoubles() {
         {props.onArchiveWorkspace ? (
           <button
             type="button"
-            aria-label={`archive-${props.metadata.id}`}
+            aria-label={`archive-${metadata.id}`}
             onClick={(event) => {
-              void props.onArchiveWorkspace?.(props.metadata.id, event.currentTarget);
+              void props.onArchiveWorkspace?.(metadata.id, event.currentTarget);
             }}
           >
             Archive workspace
@@ -635,6 +682,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -745,6 +793,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -853,6 +902,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
+      updateColor: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -1006,6 +1056,66 @@ describe("ProjectSidebar archive confirmations", () => {
     });
     expect(archivePopoverShowErrorMock).not.toHaveBeenCalled();
   });
+
+  test("surfaces archive errors after confirmation when untracked paths are unchanged", async () => {
+    let preflightCallCount = 0;
+    preflightArchiveWorkspaceMock = mock(
+      (_workspaceId: string): Promise<ArchivePreflightActionResult> => {
+        preflightCallCount += 1;
+        return resolveArchivePreflight({
+          kind: "confirm-lossy-untracked-files",
+          paths: ["late-file.txt"],
+        });
+      }
+    );
+    archiveWorkspaceActionMock = mock(
+      (
+        workspaceId: string,
+        options?: { acknowledgedUntrackedPaths?: string[] }
+      ): Promise<ArchiveWorkspaceActionResult> => {
+        expect(workspaceId).toBe("archive-stable-untracked");
+        expect(options).toEqual({ acknowledgedUntrackedPaths: ["late-file.txt"] });
+        return Promise.resolve({ success: false as const, error: "snapshot failed" });
+      }
+    );
+
+    spyOn(PopoverErrorHookModule, "usePopoverError").mockImplementation(
+      () =>
+        ({
+          error: null,
+          showError: archivePopoverShowErrorMock,
+          clearError: mock(() => undefined),
+        }) as unknown as ReturnType<typeof PopoverErrorHookModule.usePopoverError>
+    );
+
+    const workspace = {
+      ...createWorkspace("archive-stable-untracked"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    const view = renderArchiveSidebar(workspace);
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("archive-confirmation-modal")).toBeTruthy();
+    });
+
+    await act(async () => {
+      await latestArchiveConfirmationModalProps?.onConfirm();
+    });
+
+    await waitFor(() => {
+      expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
+      expect(archivePopoverShowErrorMock).toHaveBeenCalledTimes(1);
+    });
+    expect(preflightCallCount).toBe(2);
+    expect(archivePopoverShowErrorMock).toHaveBeenCalledWith(workspace.id, "snapshot failed");
+    expect(view.queryByTestId("archive-confirmation-modal")).toBeNull();
+  });
 });
 
 describe("ProjectSidebar archive errors", () => {
@@ -1043,6 +1153,19 @@ describe("ProjectSidebar archive errors", () => {
       ): Promise<ArchiveWorkspaceActionResult> =>
         Promise.resolve({ success: false as const, error: "snapshot failed" })
     );
+    const apiWithArchivePreflight = {
+      workspace: {
+        preflightArchive: () =>
+          Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+      },
+    } as unknown as NonNullable<ReturnType<typeof APIModule.useAPI>["api"]>;
+    spyOn(APIModule, "useAPI").mockImplementation(() => ({
+      api: apiWithArchivePreflight,
+      status: "connected",
+      error: null,
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }));
 
     const workspace = {
       ...createWorkspace("archive-target"),
@@ -1085,6 +1208,167 @@ describe("ProjectSidebar archive errors", () => {
     expect(args?.[0]).toBe(workspace.id);
     expect(args?.[1]).toBe("snapshot failed");
     expect(args?.length).toBe(2);
+  });
+});
+
+describe("ProjectSidebar archive confirmations", () => {
+  beforeEach(() => {
+    cleanupDom = installDom();
+    window.localStorage.clear();
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    settingsOpenMock = mock(() => undefined);
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+    });
+    installProjectSidebarTestDoubles();
+  });
+
+  afterEach(() => {
+    cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
+    mock.restore();
+  });
+
+  test("opens the archive confirmation modal when preflight finds untracked files", async () => {
+    const workspace = {
+      ...createWorkspace("archive-untracked"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    const preflightArchiveWorkspace = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { kind: "confirm-lossy-untracked-files" as const, paths: ["scratch.txt"] },
+      })
+    );
+    const archiveWorkspace = mock(() => Promise.resolve({ success: true as const }));
+
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace,
+          archiveWorkspace,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {},
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
+        workspaceRecency={{ [workspace.id]: Date.now() }}
+      />
+    );
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    await waitFor(() => {
+      expect(latestArchiveConfirmationModalProps?.isOpen).toBe(true);
+    });
+    expect(latestArchiveConfirmationModalProps?.title).toBe(
+      "Archive workspace with untracked files?"
+    );
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+  });
+
+  test("reopens the archive confirmation modal when archive finds new untracked files", async () => {
+    const workspace = {
+      ...createWorkspace("archive-race-window"),
+      projects: [{ projectPath: "/projects/demo-project", projectName: "demo-project" }],
+    };
+    let preflightCallCount = 0;
+    const preflightArchiveWorkspace = mock<
+      (workspaceId: string) => Promise<{ success: true; data: { kind: string; paths?: string[] } }>
+    >((workspaceId: string) => {
+      if (workspaceId !== workspace.id) {
+        return Promise.resolve({ success: true, data: { kind: "ready" } });
+      }
+      preflightCallCount += 1;
+      if (preflightCallCount === 1) {
+        return Promise.resolve({
+          success: true,
+          data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt"] },
+        });
+      }
+      return Promise.resolve({
+        success: true,
+        data: { kind: "confirm-lossy-untracked-files", paths: ["a.txt", "b.txt"] },
+      });
+    });
+    const archiveWorkspace = mock(() =>
+      Promise.resolve({
+        success: false as const,
+        error:
+          "Untracked files changed since you reviewed them. New files: b.txt. Please try again.",
+      })
+    );
+
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace,
+          archiveWorkspace,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {},
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([["/projects/demo-project", [workspace]]])}
+        workspaceRecency={{ [workspace.id]: Date.now() }}
+      />
+    );
+
+    const archiveButton = document.createElement("button");
+    expect(latestArchiveWorkspaceHandler).toBeTruthy();
+    await act(async () => {
+      await latestArchiveWorkspaceHandler?.(workspace.id, archiveButton);
+    });
+
+    await waitFor(() => {
+      expect(latestArchiveConfirmationModalProps?.isOpen).toBe(true);
+      expect(latestArchiveConfirmationModalProps?.warning?.includes("a.txt")).toBe(true);
+    });
+
+    await act(async () => {
+      await latestArchiveConfirmationModalProps?.onConfirm();
+    });
+
+    await waitFor(() => {
+      expect(preflightArchiveWorkspace.mock.calls.length).toBe(2);
+      expect(latestArchiveConfirmationModalProps?.isOpen).toBe(true);
+      expect(latestArchiveConfirmationModalProps?.warning?.includes("b.txt")).toBe(true);
+    });
+    expect(archivePopoverShowErrorMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1136,7 +1420,9 @@ describe("ProjectSidebar project actions menu", () => {
     const menuButtons = within(menu).getAllByRole("button");
     expect(menuButtons.map((button) => button.textContent)).toEqual([
       "Edit name",
+      "Add sub-folder",
       "Manage secrets",
+      "Change color",
       "Delete...",
     ]);
   });
@@ -1170,6 +1456,297 @@ describe("ProjectSidebar project actions menu", () => {
     fireEvent.click(view.getByRole("button", { name: "Delete..." }));
 
     expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
+  });
+
+  test("reopening the color picker does not apply stale pending color", async () => {
+    const updateColor = mock((_projectPath: string, _color: string | null) => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#6B7280",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    // Let the initial sync settle so the picker starts from the current project color.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    fireEvent.click(view.getByTestId("hex-color-picker"));
+
+    // Close before the next debounce window expires so this picker session leaves
+    // behind a pending value that must not auto-commit on reopen.
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    expect(updateColor).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(updateColor).not.toHaveBeenCalled();
+  });
+
+  test("keeps in-progress project color edits across project refreshes", async () => {
+    const updateColor = mock((_projectPath: string, _color: string | null) => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#6B7280",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Change color" }));
+
+    const initialInput = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+    expect(initialInput?.value).toBe("#6b7280");
+
+    fireEvent.click(view.getByTestId("hex-color-picker"));
+
+    await waitFor(() => {
+      const input = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+      expect(input?.value).toBe("#123456");
+    });
+
+    // Simulate a project refresh echoing a new persisted color while the picker
+    // remains open; the in-progress local edit should remain untouched.
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            color: "#112233",
+          },
+        ],
+      ]),
+      updateColor,
+    });
+
+    view.rerender(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map()}
+        workspaceRecency={{}}
+      />
+    );
+
+    const inputAfterRefresh = view.container.querySelector<HTMLInputElement>('input[type="text"]');
+    expect(inputAfterRefresh?.value).toBe("#123456");
+  });
+
+  test("Add sub-folder expands collapsed project before auto-editing", async () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([]));
+    const createSection = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+      })
+    );
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [],
+            sections: [
+              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+            ],
+          },
+        ],
+      ]),
+      createSection,
+    });
+
+    const view = renderSidebar();
+    expect(view.getByRole("button", { name: "Expand project demo-project" })).toBeTruthy();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
+
+    await waitFor(() => {
+      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
+      expect(view.getByRole("button", { name: "Collapse project demo-project" })).toBeTruthy();
+    });
+  });
+
+  test("Add sub-folder abandon reuses section-delete confirmation before removing", async () => {
+    const createSection = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+      })
+    );
+    const removeSection = mock(() => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [
+              {
+                path: `${demoProjectPath}/ws-in-section`,
+                sectionId: "new-section",
+              },
+            ],
+            sections: [
+              { id: "new-section", name: "New sub-folder", color: "#6B7280", nextId: null },
+            ],
+          },
+        ],
+      ]),
+      createSection,
+      removeSection,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Add sub-folder" }));
+
+    await waitFor(() => {
+      expect(createSection).toHaveBeenCalledWith(demoProjectPath, "New sub-folder");
+    });
+
+    let autoEditProps:
+      | (Parameters<typeof SectionHeaderModule.SectionHeader>[0] & {
+          onAutoCreateAbandon?: () => void;
+          autoStartEditing?: boolean;
+        })
+      | null = null;
+    const sectionHeaderCalls = (
+      SectionHeaderModule.SectionHeader as unknown as {
+        mock: {
+          calls: Array<[Parameters<typeof SectionHeaderModule.SectionHeader>[0]]>;
+        };
+      }
+    ).mock.calls;
+    for (const [props] of sectionHeaderCalls) {
+      if (props.autoStartEditing) {
+        autoEditProps = props;
+      }
+    }
+
+    expect(autoEditProps?.autoStartEditing).toBe(true);
+    expect(typeof autoEditProps?.onAutoCreateAbandon).toBe("function");
+
+    autoEditProps?.onAutoCreateAbandon?.();
+
+    await waitFor(() => {
+      expect(confirmDialogMock).toHaveBeenCalledWith({
+        title: "Delete section?",
+        description: "1 workspace(s) in this section will be moved to unsectioned.",
+        confirmLabel: "Delete",
+        confirmVariant: "destructive",
+      });
+      expect(removeSection).toHaveBeenCalledWith(demoProjectPath, "new-section");
+    });
+  });
+
+  test("marks section attention when a promoted draft workspace needs attention", () => {
+    const promotedWorkspace = {
+      ...createWorkspace("promoted-workspace", { title: "Promoted workspace" }),
+      sectionId: "section-1",
+      isInitializing: true,
+    };
+
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [
+          demoProjectPath,
+          {
+            workspaces: [
+              {
+                path: `${demoProjectPath}/promoted-workspace`,
+                sectionId: "section-1",
+              },
+            ],
+            sections: [{ id: "section-1", name: "Section 1", color: "#6B7280", nextId: null }],
+          },
+        ],
+      ]),
+    });
+
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: preflightArchiveWorkspaceMock,
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId: "draft-promoted",
+                sectionId: "section-1",
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {
+            [demoProjectPath]: {
+              "draft-promoted": promotedWorkspace,
+            },
+          },
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([[demoProjectPath, [promotedWorkspace]]])}
+        workspaceRecency={{}}
+      />
+    );
+
+    const sectionHeaderCalls = (
+      SectionHeaderModule.SectionHeader as unknown as {
+        mock: {
+          calls: Array<[Parameters<typeof SectionHeaderModule.SectionHeader>[0]]>;
+        };
+      }
+    ).mock.calls;
+    const sectionProps = sectionHeaderCalls
+      .map(([props]) => props)
+      .find((props) => props.section.id === "section-1");
+
+    expect(sectionProps?.hasAttention).toBe(true);
   });
 
   test("supports inline project name editing with Enter, Escape, and empty-to-null commit", async () => {
@@ -1227,5 +1804,86 @@ describe("ProjectSidebar project actions menu", () => {
 
     expect(view.getByText("Custom Label")).toBeTruthy();
     expect(view.getByText("fallback-project")).toBeTruthy();
+  });
+
+  test("keeps empty placeholder visible when only hidden empty drafts exist", () => {
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: () =>
+            Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId: "draft-hidden-empty",
+                sectionId: null,
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    const view = renderSidebar();
+
+    expect(view.getByText("Empty")).toBeTruthy();
+  });
+
+  test("hides empty placeholder immediately when a hidden draft becomes visible", async () => {
+    const draftId = "draft-hidden-empty";
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: null,
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: () =>
+            Promise.resolve({ success: true, data: { kind: "ready" as const } }),
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {
+            [demoProjectPath]: [
+              {
+                draftId,
+                sectionId: null,
+                createdAt: Date.now(),
+              },
+            ],
+          },
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+
+    const view = renderSidebar();
+    expect(view.getByText("Empty")).toBeTruthy();
+
+    const draftScopeId = getDraftScopeId(demoProjectPath, draftId);
+    const draftInputKey = getInputKey(draftScopeId);
+
+    act(() => {
+      updatePersistedState<string>(draftInputKey, "Visible draft prompt", "");
+    });
+
+    await waitFor(() => {
+      expect(view.queryByText("Empty")).toBeNull();
+    });
   });
 });

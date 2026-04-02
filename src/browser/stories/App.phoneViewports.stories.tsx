@@ -318,7 +318,7 @@ export const IPhone16eSidebarWithSections: AppStory = {
         // The actual visibility assertion (opacity via CSS media query) is
         // validated by the Chromatic snapshot in touch mode — the Storybook
         // test runner doesn't emulate pointer:coarse media queries.
-        within(sectionHeader as HTMLElement).getByLabelText("New workspace in section");
+        within(sectionHeader as HTMLElement).getByLabelText("New chat in section");
       },
       { timeout: 10_000 }
     );

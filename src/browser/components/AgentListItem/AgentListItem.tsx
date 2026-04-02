@@ -77,6 +77,7 @@ interface AgentListItemBaseProps {
   projectPath: string;
   isSelected: boolean;
   depth?: number;
+  sectionId?: string;
 }
 
 /** Props for regular (persisted) workspace items */
@@ -84,6 +85,7 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   variant?: "workspace";
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
+  subAgentConnectorLayout?: "default" | "task-group-member";
   isArchiving?: boolean;
   /** True when deletion is in-flight (optimistic UI while backend removes). */
   isRemoving?: boolean;
@@ -125,7 +127,19 @@ const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  return 12 + Math.min(32, safeDepth) * 12;
+  return 8 + Math.min(32, safeDepth) * 12;
+}
+
+function getSubAgentConnectorLeft(
+  indentLeft: number,
+  layout: "default" | "task-group-member"
+): number {
+  return layout === "task-group-member" ? indentLeft - 2 : indentLeft + 9;
+}
+
+function getAncestorTrunkLeft(depth: number, layout: "default" | "task-group-member"): number {
+  const indentLeft = getItemPaddingLeft(depth);
+  return layout === "task-group-member" ? indentLeft + 6 : indentLeft + 8;
 }
 
 type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
@@ -254,11 +268,12 @@ function QuickArchiveButton(props: {
 }
 
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
-function ActionButtonWrapper(props: { children: React.ReactNode }) {
+function ActionButtonWrapper(props: { children: React.ReactNode; className?: string }) {
   return (
     <div
       className={cn(
-        "relative order-last ml-auto mt-1 inline-flex h-4 w-4 shrink-0 items-center self-start"
+        "relative order-last ml-auto mt-1 inline-flex shrink-0 items-center gap-1 self-start",
+        props.className
       )}
     >
       {/* Keep the kebab trigger aligned with the title row. */}
@@ -272,9 +287,19 @@ function ActionButtonWrapper(props: { children: React.ReactNode }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DraftAgentListItemInner(props: DraftAgentListItemProps) {
-  const { projectPath, isSelected, depth, draft } = props;
+  const { projectPath, isSelected, depth, sectionId, draft } = props;
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
+  const draftBorderStyle: React.CSSProperties = {
+    backgroundImage: [
+      "repeating-linear-gradient(to right, var(--color-border) 0 5px, transparent 5px 10px)",
+      "repeating-linear-gradient(to right, var(--color-border) 0 5px, transparent 5px 10px)",
+      "repeating-linear-gradient(to bottom, var(--color-border) 0 5px, transparent 5px 10px)",
+    ].join(", "),
+    backgroundSize: "100% 1.5px, 100% 1.5px, 1.5px 100%",
+    backgroundPosition: "left top, left bottom, left top",
+    backgroundRepeat: "no-repeat",
+  };
 
   const ctxMenu = useContextMenuPosition({ longPress: true });
 
@@ -282,10 +307,11 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
     <div
       className={cn(
         LIST_ITEM_BASE_CLASSES,
-        "border-border cursor-pointer border-t border-b border-l border-dashed pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
+        sectionId != null ? "ml-8" : "ml-6.5",
+        "cursor-pointer pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
         isSelected && "bg-surface-secondary"
       )}
-      style={{ paddingLeft }}
+      style={{ paddingLeft, ...draftBorderStyle }}
       onClick={() => {
         if (ctxMenu.suppressClickIfLongPress()) return;
         draft.onOpen();
@@ -609,7 +635,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     !isSelected && visualState === "idle"
       ? "text-content-primary"
       : !isSelected && visualState === "seen"
-        ? "text-content-secondary"
+        ? "text-content-tertiary"
         : "text-content-primary";
 
   const paddingLeft = getItemPaddingLeft(depth);
@@ -647,6 +673,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           "group/row",
+          sectionId != null ? "ml-7.5" : "ml-5",
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.
@@ -761,7 +788,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (
-          <ActionButtonWrapper>
+          <ActionButtonWrapper className="mt-0 self-center">
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -1059,9 +1086,15 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
     const isElbowActive = props.metadata.taskStatus === "running";
-    const indentLeft = getItemPaddingLeft(props.depth);
+    // Task-group members use a slightly different left rail so their connector
+    // trunk aligns with the group's leading chevron column.
+    const connectorLayout = props.subAgentConnectorLayout ?? "default";
+    const connectorLeft = getSubAgentConnectorLeft(
+      getItemPaddingLeft(props.depth),
+      connectorLayout
+    );
     const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
-      left: getItemPaddingLeft(trunk.depth) - 4,
+      left: getAncestorTrunkLeft(trunk.depth, connectorLayout),
       active: trunk.active,
     }));
 
@@ -1072,7 +1105,7 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
         sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
         sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
         ancestorTrunks={ancestorTrunks}
-        indentLeft={indentLeft}
+        connectorLeft={connectorLeft}
         isSelected={props.isSelected}
         isElbowActive={isElbowActive}
       >

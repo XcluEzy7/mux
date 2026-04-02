@@ -114,6 +114,8 @@
     --color-text-secondary: hsl(0 0% 42%);
     --color-content-primary: hsl(0 0% 100%);
     --color-content-secondary: hsla(240, 5%, 65%);
+    --color-content-tertiary: hsla(240, 5%, 34%);
+    --color-content-disabled: hsl(240, 5%, 26%);
     --color-muted-foreground: hsl(0 0% 60%);
     --color-secondary: hsl(0 0% 42%);
     --color-surface-primary: hsla(240, 10%, 4%, 1);
@@ -408,13 +410,15 @@
 
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
-  --color-border: hsl(210 24% 82%);
+  --color-border: hsl(210, 24%, 82%);
   --color-foreground: hsl(210 18% 16%);
   --color-text: hsl(210 18% 16%);
   --color-text-light: hsl(210 15% 28%);
   --color-text-secondary: hsl(210 12% 42%);
   --color-content-primary: hsl(240 10% 4%);
   --color-content-secondary: hsla(240, 5%, 34%);
+  --color-content-tertiary: hsl(240, 4%, 46%);
+  --color-content-disabled: hsl(240, 5%, 65%);
   --color-muted-foreground: hsl(210 14% 48%);
   --color-secondary: hsl(210 18% 60%);
   --color-surface-primary: hsla(0, 0%, 100%, 1);
@@ -673,6 +677,8 @@
   --color-text-secondary: #6f6e69;
   --color-content-primary: #100f0f;
   --color-content-secondary: #575653;
+  --color-content-tertiary: #6f6e69;
+  --color-content-disabled: #b7b5ac;
   --color-muted-foreground: #6f6e69;
   --color-secondary: #6f6e69;
   --color-surface-primary: #fffcf0;
@@ -903,6 +909,8 @@
   --color-text-secondary: #575653;
   --color-content-primary: #fffcf0;
   --color-content-secondary: #878580;
+  --color-content-tertiary: #575653;
+  --color-content-disabled: #403e3c;
   --color-muted-foreground: #878580;
   --color-secondary: #575653;
   --color-surface-primary: #100f0f;
