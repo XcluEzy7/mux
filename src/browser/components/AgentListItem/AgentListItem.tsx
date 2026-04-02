@@ -38,6 +38,7 @@ import {
   Eye,
   EyeOff,
   ChevronDown,
+  HeartPulse,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -191,6 +192,12 @@ function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: 
 
 const LEADING_SLOT_CONTAINER_CLASSES =
   "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center";
+
+function HeartbeatFallbackIcon() {
+  return (
+    <HeartPulse aria-hidden="true" className="text-muted h-4 w-4" data-testid="heartbeat-icon" />
+  );
+}
 
 function StatusDot(props: {
   state: VisualState;
@@ -622,6 +629,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     !isSubAgentRow &&
     !showCompletedChildrenIndicator &&
     !showsVisibleStatusDot;
+  const shouldShowHeartbeatFallback =
+    workspaceHeartbeatsEnabled &&
+    metadata.heartbeat?.enabled === true &&
+    !isSubAgentRow &&
+    !showCompletedChildrenIndicator &&
+    visualState === "seen" &&
+    !isDisabled;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -763,7 +777,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
       >
-        {shouldShowQuickArchiveButton ? (
+        {shouldShowHeartbeatFallback ? (
+          <div className={LEADING_SLOT_CONTAINER_CLASSES}>
+            <HeartbeatFallbackIcon />
+          </div>
+        ) : shouldShowQuickArchiveButton ? (
           <QuickArchiveButton
             displayTitle={displayTitle}
             onArchiveWorkspace={(button) => {

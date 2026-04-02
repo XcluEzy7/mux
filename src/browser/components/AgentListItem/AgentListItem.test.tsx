@@ -2,6 +2,7 @@ import "../../../../tests/ui/dom";
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, render, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 import type * as ReactDndModuleType from "react-dnd";
 import type * as ReactDndHtml5BackendModuleType from "react-dnd-html5-backend";
@@ -9,12 +10,27 @@ import * as APIModule from "@/browser/contexts/API";
 import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
 import * as WorkspaceTitleEditContextModule from "@/browser/contexts/WorkspaceTitleEditContext";
 import * as ContextMenuPositionModule from "@/browser/hooks/useContextMenuPosition";
+import * as ExperimentsModule from "@/browser/hooks/useExperiments";
 import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallbackModel";
 import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
+import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AgentListItem as AgentListItemComponent } from "./AgentListItem";
+
+void mock.module("../Tooltip/Tooltip", () => ({
+  Tooltip: (props: { children: ReactNode }) => <>{props.children}</>,
+  TooltipTrigger: (props: { children: ReactNode }) => <>{props.children}</>,
+  TooltipContent: (props: { children: ReactNode }) => <>{props.children}</>,
+}));
+
+void mock.module("@/browser/components/WorkspaceStatusIndicator/WorkspaceStatusIndicator", () => ({
+  WorkspaceStatusIndicator: (props: { workspaceId: string }) => (
+    <div data-testid={`workspace-status-indicator-${props.workspaceId}`} />
+  ),
+}));
 
 let ReactDndModule!: typeof ReactDndModuleType;
 let ReactDndHtml5BackendModule!: typeof ReactDndHtml5BackendModuleType;
@@ -22,8 +38,48 @@ let AgentListItem!: typeof AgentListItemComponent;
 
 const TEST_WORKSPACE_ID = "workspace-archiving";
 const TEST_WORKSPACE_TITLE = "Archiving Workspace";
+const HEARTBEAT_INTERVAL_MS = 60_000;
 
-function createMetadata(): FrontendWorkspaceMetadata {
+type MockWorkspaceUnreadState = ReturnType<typeof WorkspaceUnreadModule.useWorkspaceUnread>;
+type MockWorkspaceSidebarState = ReturnType<typeof WorkspaceStoreModule.useWorkspaceSidebarState>;
+
+let mockWorkspaceHeartbeatsEnabled = false;
+let mockWorkspaceUnreadState: MockWorkspaceUnreadState;
+let mockWorkspaceSidebarState: MockWorkspaceSidebarState;
+
+function createWorkspaceUnreadState(
+  overrides: Partial<MockWorkspaceUnreadState> = {}
+): MockWorkspaceUnreadState {
+  return {
+    isUnread: false,
+    lastReadTimestamp: null,
+    recencyTimestamp: null,
+    ...overrides,
+  };
+}
+
+function createWorkspaceSidebarState(
+  overrides: Partial<MockWorkspaceSidebarState> = {}
+): MockWorkspaceSidebarState {
+  return {
+    canInterrupt: false,
+    isStarting: false,
+    awaitingUserQuestion: false,
+    lastAbortReason: null,
+    currentModel: null,
+    recencyTimestamp: null,
+    loadedSkills: [],
+    skillLoadErrors: [],
+    agentStatus: undefined,
+    terminalActiveCount: 0,
+    terminalSessionCount: 0,
+    ...overrides,
+  };
+}
+
+function createMetadata(
+  overrides: Partial<FrontendWorkspaceMetadata> = {}
+): FrontendWorkspaceMetadata {
   return {
     id: TEST_WORKSPACE_ID,
     name: "archiving-workspace",
@@ -33,6 +89,14 @@ function createMetadata(): FrontendWorkspaceMetadata {
     namedWorkspacePath: "/tmp/project/archiving-workspace",
     runtimeConfig: { type: "local" },
     createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function createSystemAbortReason(): StreamAbortReasonSnapshot {
+  return {
+    reason: "system",
+    at: Date.now(),
   };
 }
 
@@ -77,35 +141,66 @@ function installAgentListItemTestDoubles() {
     suppressClickIfLongPress: () => false,
     close: () => undefined,
   }));
-  spyOn(WorkspaceUnreadModule, "useWorkspaceUnread").mockImplementation(() => ({
-    isUnread: false,
-    lastReadTimestamp: null,
-    recencyTimestamp: null,
-  }));
+  spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+    () => mockWorkspaceHeartbeatsEnabled
+  );
+  spyOn(WorkspaceUnreadModule, "useWorkspaceUnread").mockImplementation(
+    () => mockWorkspaceUnreadState
+  );
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => null);
   spyOn(WorkspaceFallbackModelModule, "useWorkspaceFallbackModel").mockImplementation(
     () => "claude-sonnet-4-5"
   );
-  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(() => ({
-    canInterrupt: false,
-    isStarting: false,
-    awaitingUserQuestion: false,
-    lastAbortReason: null,
-    currentModel: null,
-    recencyTimestamp: null,
-    loadedSkills: [],
-    skillLoadErrors: [],
-    agentStatus: undefined,
-    terminalActiveCount: 0,
-    terminalSessionCount: 0,
-  }));
+  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(
+    () => mockWorkspaceSidebarState
+  );
 }
 
-describe("AgentListItem archiving layout", () => {
+function renderWorkspaceItem(
+  options: {
+    metadata?: FrontendWorkspaceMetadata;
+    isSelected?: boolean;
+    isArchiving?: boolean;
+    rowRenderMeta?: AgentRowRenderMeta;
+    completedChildrenExpanded?: boolean;
+    onToggleCompletedChildren?: (workspaceId: string) => void;
+  } = {}
+) {
+  const metadata = options.metadata ?? createMetadata();
+  const view = render(
+    <AgentListItem
+      metadata={metadata}
+      projectPath={metadata.projectPath}
+      projectName={metadata.projectName}
+      isSelected={options.isSelected ?? false}
+      isArchiving={options.isArchiving}
+      rowRenderMeta={options.rowRenderMeta}
+      completedChildrenExpanded={options.completedChildrenExpanded}
+      onToggleCompletedChildren={options.onToggleCompletedChildren}
+      onSelectWorkspace={() => undefined}
+      onForkWorkspace={() => Promise.resolve()}
+      onArchiveWorkspace={() => Promise.resolve()}
+      onCancelCreation={() => Promise.resolve()}
+    />
+  );
+
+  return {
+    metadata,
+    view,
+    row: view.getByRole("button", {
+      name: `${options.isArchiving ? "Archiving" : "Select"} workspace ${metadata.title ?? metadata.name}`,
+    }),
+  };
+}
+
+describe("AgentListItem", () => {
   let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
     cleanupDom = installDom();
+    mockWorkspaceHeartbeatsEnabled = false;
+    mockWorkspaceUnreadState = createWorkspaceUnreadState();
+    mockWorkspaceSidebarState = createWorkspaceSidebarState();
     /* eslint-disable @typescript-eslint/no-require-imports */
     ReactDndModule = require("react-dnd") as typeof ReactDndModuleType;
     ReactDndHtml5BackendModule =
@@ -125,24 +220,7 @@ describe("AgentListItem archiving layout", () => {
   });
 
   test("keeps archiving feedback inline instead of rendering a secondary status row", () => {
-    const metadata = createMetadata();
-    const view = render(
-      <AgentListItem
-        metadata={metadata}
-        projectPath={metadata.projectPath}
-        projectName={metadata.projectName}
-        isSelected={false}
-        isArchiving
-        onSelectWorkspace={() => undefined}
-        onForkWorkspace={() => Promise.resolve()}
-        onArchiveWorkspace={() => Promise.resolve()}
-        onCancelCreation={() => Promise.resolve()}
-      />
-    );
-
-    const row = view.getByRole("button", {
-      name: `Archiving workspace ${TEST_WORKSPACE_TITLE}`,
-    });
+    const { row } = renderWorkspaceItem({ isArchiving: true });
     const rowView = within(row);
 
     expect(
@@ -150,4 +228,145 @@ describe("AgentListItem archiving layout", () => {
     ).toBeTruthy();
     expect(rowView.queryByTestId(`workspace-secondary-row-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
+
+  test("renders a heartbeat icon directly in the leading slot for seen rows when the heartbeat experiment is enabled", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+
+    const { row } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+    });
+    const rowView = within(row);
+    const heartbeatIcon = rowView.getByTestId("heartbeat-icon");
+
+    expect(heartbeatIcon).toBeTruthy();
+    expect(heartbeatIcon.parentElement?.className).toContain(
+      "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+    );
+    expect(
+      rowView.queryByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
+    ).toBeNull();
+  });
+
+  test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+
+    const { row, metadata } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+      rowRenderMeta: {
+        depth: 0,
+        rowKind: "primary",
+        connectorPosition: "single",
+        connectorStartsAtParent: false,
+        sharedTrunkActiveThroughRow: false,
+        sharedTrunkActiveBelowRow: false,
+        ancestorTrunks: [],
+        hasHiddenCompletedChildren: false,
+        visibleCompletedChildrenCount: 1,
+      },
+      completedChildrenExpanded: true,
+      onToggleCompletedChildren: () => undefined,
+    });
+    const rowView = within(row);
+
+    expect(rowView.queryByTestId("heartbeat-icon")).toBeNull();
+    expect(
+      rowView.getByTestId(`completed-children-expanded-indicator-${metadata.id}`)
+    ).toBeTruthy();
+    expect(
+      rowView.queryByRole("button", { name: `Archive workspace ${TEST_WORKSPACE_TITLE}` })
+    ).toBeNull();
+  });
+
+  test("does not render a heartbeat icon fallback when the heartbeat experiment is disabled", () => {
+    const { row } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+    });
+
+    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
+  });
+
+  test("does not render a heartbeat icon fallback when heartbeat is disabled", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+
+    const { row } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: false, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+    });
+
+    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
+  });
+
+  test("does not render a heartbeat icon fallback when heartbeat settings are missing", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+
+    const { row } = renderWorkspaceItem();
+
+    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
+  });
+
+  test("keeps the unread idle status dot when heartbeat is enabled", () => {
+    mockWorkspaceHeartbeatsEnabled = true;
+    mockWorkspaceUnreadState = createWorkspaceUnreadState({ isUnread: true });
+
+    const { row } = renderWorkspaceItem({
+      metadata: createMetadata({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+      }),
+    });
+
+    expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
+    expect(row.querySelector(".bg-surface-invert-secondary.border-surface-tertiary")).toBeTruthy();
+  });
+
+  test.each([
+    {
+      name: "active rows",
+      sidebarState: createWorkspaceSidebarState({ canInterrupt: true }),
+      expectedSelector: ".workspace-status-dot-active",
+      expectedText: null,
+    },
+    {
+      name: "starting rows",
+      sidebarState: createWorkspaceSidebarState({ isStarting: true }),
+      expectedSelector: ".workspace-status-dot-active",
+      expectedText: null,
+    },
+    {
+      name: "question rows",
+      sidebarState: createWorkspaceSidebarState({ awaitingUserQuestion: true }),
+      expectedSelector: ".bg-border-pending.border-surface-sky",
+      expectedText: "Mux has a few questions",
+    },
+    {
+      name: "error rows",
+      sidebarState: createWorkspaceSidebarState({ lastAbortReason: createSystemAbortReason() }),
+      expectedSelector: ".bg-content-destructive.border-surface-destructive",
+      expectedText: null,
+    },
+  ])(
+    "leaves $name unchanged when heartbeat is enabled",
+    ({ sidebarState, expectedSelector, expectedText }) => {
+      mockWorkspaceHeartbeatsEnabled = true;
+      mockWorkspaceSidebarState = sidebarState;
+
+      const { row } = renderWorkspaceItem({
+        metadata: createMetadata({
+          heartbeat: { enabled: true, intervalMs: HEARTBEAT_INTERVAL_MS },
+        }),
+      });
+
+      expect(within(row).queryByTestId("heartbeat-icon")).toBeNull();
+      expect(row.querySelector(expectedSelector)).toBeTruthy();
+      if (expectedText) {
+        expect(within(row).getByText(expectedText)).toBeTruthy();
+      }
+    }
+  );
 });
