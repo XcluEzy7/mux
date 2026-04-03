@@ -124,6 +124,7 @@
     --color-surface-destructive: hsla(0, 75%, 15%, 1);
     --color-surface-invert-secondary: hsla(240, 5%, 65%, 1);
     --color-surface-tertiary: hsla(240, 4%, 16%, 1);
+    --color-surface-quaternary: hsla(240, 5%, 26%, 1);
     --color-content-success: hsla(142, 76%, 36%, 1);
     --color-surface-green: hsla(145, 80%, 10%, 1);
     --color-border-pending: hsla(188, 75%, 80%, 1);
@@ -427,6 +428,7 @@
   --color-surface-destructive: hsla(0, 93%, 94%, 1);
   --color-surface-invert-secondary: hsla(240, 5%, 26%, 1);
   --color-surface-tertiary: hsla(240, 6%, 90%, 1);
+  --color-surface-quaternary: hsla(240, 5%, 84%, 1);
   --color-content-success: hsla(142, 72%, 29%, 1);
   --color-surface-green: hsla(141, 79%, 85%, 1);
   --color-border-pending: hsla(194, 49%, 45%, 1);
@@ -687,6 +689,7 @@
   --color-surface-destructive: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
   --color-surface-invert-secondary: #403e3c;
   --color-surface-tertiary: #f2f0e5;
+  --color-surface-quaternary: #dad8ce;
   --color-content-success: #66800b;
   --color-surface-green: color-mix(in srgb, var(--color-success) 20%, var(--color-background) 80%);
   --color-border-pending: #24837b;
@@ -919,6 +922,7 @@
   --color-surface-destructive: color-mix(in srgb, var(--color-danger) 16%, var(--color-background) 84%);
   --color-surface-invert-secondary: #b7b5ac;
   --color-surface-tertiary: #282726;
+  --color-surface-quaternary: #343331;
   --color-content-success: #879a39;
   --color-surface-green: color-mix(in srgb, var(--color-success) 18%, var(--color-background) 82%);
   --color-border-pending: #3aa99f;
@@ -1106,37 +1110,19 @@ body {
   font-size: 14px;
 }
 
-/* Custom scrollbar styles */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-scrollbar-track);
+/* Global scrollbar styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-quaternary) transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar-thumb);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scrollbar-thumb-hover);
-}
-
-/* Firefox scrollbar */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+  background: var(--color-surface-quaternary);
 }
 
 /*
  * Override for Tailwind's scrollbar-none utility.
- * The global ::-webkit-scrollbar rules above opt Chromium/Electron into
- * WebKit custom scrollbar rendering, which ignores the standard
- * scrollbar-width: none that scrollbar-none generates. This explicit
- * pseudo-element override restores the hidden behavior.
+ * Keep this as a defensive Chromium/Electron fallback for full hiding.
  */
 .scrollbar-none::-webkit-scrollbar {
   display: none;

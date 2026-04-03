@@ -107,6 +107,7 @@ import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
 import { DraggableSection } from "../DraggableSection/DraggableSection";
 import { Separator } from "../Separator/Separator";
+import { ScrollArea } from "../ScrollArea/ScrollArea";
 import type { SectionConfig } from "@/common/types/project";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
@@ -537,7 +538,7 @@ const ProjectDragLayer: React.FC = () => {
   const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
+    <div className="pointer-events-none fixed inset-0 z-9999 cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
         <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
           <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
@@ -1782,10 +1783,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   <span>Add Project</span>
                 </button>
               </div>
-              <div
-                ref={projectListScrollRef}
-                onScroll={handleProjectListScroll}
-                className="flex-1 overflow-x-hidden overflow-y-auto"
+              <ScrollArea
+                className="flex-1"
+                viewportRef={projectListScrollRef}
+                onViewportScroll={handleProjectListScroll}
+                viewportClassName="overflow-x-hidden"
               >
                 {multiProjectWorkspaces.length > 0 && (
                   <div>
@@ -1942,7 +1944,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <span className="relative flex h-4 w-4 -translate-x-2 items-center justify-center md:translate-x-0">
                               <ChevronRight
                                 className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
-                                style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                                style={{
+                                  transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                }}
                               />
                               {isExpanded ? (
                                 <FolderOpen
@@ -2620,8 +2624,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     lastRunningSiblingIndex >= 0 &&
                                     siblingIndex < lastRunningSiblingIndex;
 
-                                  const ancestorTrunks: Array<{ depth: number; active: boolean }> =
-                                    [];
+                                  const ancestorTrunks: Array<{
+                                    depth: number;
+                                    active: boolean;
+                                  }> = [];
                                   const visitedAncestorIds = new Set<string>();
                                   let ancestorId: string | undefined = parentId;
                                   while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
@@ -2970,7 +2976,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     );
                   })
                 )}
-              </div>
+              </ScrollArea>
             </>
           )}
           <SidebarCollapseButton
