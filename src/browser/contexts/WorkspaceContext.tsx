@@ -17,7 +17,6 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
@@ -44,6 +43,7 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type LaunchBehavior,
 } from "@/common/constants/storage";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -539,6 +539,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const {
     resolveProjectPath,
     resolveNewChatProjectPath,
+    getProjectConfig,
     hasAnyProject,
     refreshProjects,
     loading: projectsLoading,
@@ -1001,9 +1002,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!currentWorkspaceId) return;
     if (workspaceMetadata.has(currentWorkspaceId)) return;
 
-    // mux-chat registers asynchronously after initial load — don't treat it as stale.
-    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) return;
-
     // If metadata is empty, a transient backend failure may have caused
     // workspace.list to return nothing — don't clear a potentially valid route.
     if (workspaceMetadata.size === 0) return;
@@ -1434,14 +1432,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
   const beginWorkspaceCreation = useCallback(
     (projectPath: string, sectionId?: string) => {
-      if (workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath === projectPath) {
-        navigateToWorkspace(MUX_HELP_CHAT_WORKSPACE_ID);
-        return;
-      }
-
       navigateToProject(projectPath, sectionId);
     },
-    [navigateToProject, navigateToWorkspace, workspaceMetadata]
+    [navigateToProject]
   );
   // Persist section selection + URL updates so draft section switches stick across navigation.
   const updateWorkspaceDraftSection = useCallback(
@@ -1575,15 +1568,31 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (cancelled) return;
 
-      hasAutoCreatedRef.current = true;
-
       const workspaceRecency = workspaceStore.getWorkspaceRecency();
       const recentWorkspace = [...workspaceMetadata.values()]
-        .filter((workspace) => workspace.projectPath && workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID)
+        .filter((workspace) => {
+          if (!workspace.projectPath) {
+            return false;
+          }
+
+          const projectConfig = getProjectConfig(workspace.projectPath);
+          if (!projectConfig) {
+            return false;
+          }
+          if (projectConfig.projectKind !== "system") {
+            return true;
+          }
+
+          // Upgraded installs can still carry hidden legacy system workspaces in metadata.
+          // Skip those here while still allowing visible multi-project (_multi) workspaces
+          // to participate in the same startup new-chat fallback as the landing page recents list.
+          return workspace.projectPath === MULTI_PROJECT_CONFIG_KEY;
+        })
         .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
 
       if (!recentWorkspace) return;
 
+      hasAutoCreatedRef.current = true;
       createWorkspaceDraft(recentWorkspace.projectPath);
     };
 
@@ -1602,6 +1611,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadata,
     workspaceStore,
     createWorkspaceDraft,
+    getProjectConfig,
   ]);
 
   const openWorkspaceDraft = useCallback(

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -94,7 +93,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { disableWorkspaceAgents } = useAgent();
   const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
   const { workspaceMetadata } = useWorkspaceContext();
-  const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
@@ -416,7 +414,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   // Keybind for opening heartbeat configuration
   useEffect(() => {
-    if (!workspaceHeartbeatsEnabled || isMuxHelpChat) return;
+    if (!workspaceHeartbeatsEnabled) return;
 
     const handler = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.CONFIGURE_HEARTBEAT)) {
@@ -426,12 +424,12 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [workspaceHeartbeatsEnabled, isMuxHelpChat]);
+  }, [workspaceHeartbeatsEnabled]);
 
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
   useEffect(() => {
-    if (isMuxHelpChat || linkSharingEnabled !== true) return;
+    if (linkSharingEnabled !== true) return;
 
     const handler = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
@@ -441,7 +439,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isMuxHelpChat, linkSharingEnabled]);
+  }, [linkSharingEnabled]);
 
   useEffect(() => {
     isSkillsMountedRef.current = true;
@@ -746,9 +744,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             <WorkspaceActionsMenuContent
               onConfigureMcp={() => setMcpModalOpen(true)}
               onConfigureHeartbeat={
-                workspaceHeartbeatsEnabled && !isMuxHelpChat
-                  ? () => setHeartbeatModalOpen(true)
-                  : null
+                workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
               }
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
@@ -766,14 +762,13 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               }}
               onCloseMenu={() => setMoreMenuOpen(false)}
               linkSharingEnabled={linkSharingEnabled === true}
-              isMuxHelpChat={isMuxHelpChat}
               shortcutClassName="mobile-hide-shortcut-hints"
               configureMcpTestId="workspace-mcp-button"
             />
           </PopoverContent>
         </Popover>
       </div>
-      {workspaceHeartbeatsEnabled && !isMuxHelpChat && (
+      {workspaceHeartbeatsEnabled && (
         <WorkspaceHeartbeatModal
           workspaceId={workspaceId}
           open={heartbeatModalOpen}
@@ -791,7 +786,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         open={debugLlmRequestOpen}
         onOpenChange={setDebugLlmRequestOpen}
       />
-      {linkSharingEnabled === true && !isMuxHelpChat && (
+      {linkSharingEnabled === true && (
         <ShareTranscriptDialog
           workspaceId={workspaceId}
           workspaceName={workspaceName}
