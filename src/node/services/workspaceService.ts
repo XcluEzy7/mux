@@ -36,9 +36,11 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import {
+  createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
+import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -2830,6 +2832,8 @@ export class WorkspaceService extends EventEmitter {
         const metadata = metadataResult.data;
         const configSnapshot = this.config.loadConfigOrDefault();
 
+        const persistedWorkspacePath = this.config.findWorkspace(workspaceId)?.workspacePath;
+
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
           const deleteErrors: string[] = [];
@@ -2844,6 +2848,20 @@ export class WorkspaceService extends EventEmitter {
               const runtime = createRuntime(metadata.runtimeConfig, {
                 projectPath: project.projectPath,
                 workspaceName: metadata.name,
+                workspacePath: persistedWorkspacePath
+                  ? getWorkspacePathHintForProject(
+                      {
+                        workspaceId,
+                        workspaceName: metadata.name,
+                        workspacePath: persistedWorkspacePath,
+                        runtimeConfig: metadata.runtimeConfig,
+                        projectPath: metadata.projectPath,
+                        projectName: metadata.projectName,
+                        projects: metadata.projects,
+                      },
+                      project.projectPath
+                    )
+                  : undefined,
               });
               const trusted =
                 configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
@@ -2964,6 +2982,7 @@ export class WorkspaceService extends EventEmitter {
           const runtime = createRuntime(metadata.runtimeConfig, {
             projectPath,
             workspaceName: metadata.name,
+            workspacePath: persistedWorkspacePath,
           });
 
           // Delete workspace from runtime first - if this fails with force=false, we abort
@@ -3459,6 +3478,7 @@ export class WorkspaceService extends EventEmitter {
               const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
                 projectPath: renamedProject.projectPath,
                 workspaceName: newName,
+                workspacePath: renamedProject.newWorkspacePath,
               });
               const rollbackTrusted =
                 configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
@@ -3492,6 +3512,18 @@ export class WorkspaceService extends EventEmitter {
           const runtime = createRuntime(oldMetadata.runtimeConfig, {
             projectPath: project.projectPath,
             workspaceName: oldName,
+            workspacePath: getWorkspacePathHintForProject(
+              {
+                workspaceId,
+                workspaceName: oldName,
+                workspacePath: workspace.workspacePath,
+                runtimeConfig: oldMetadata.runtimeConfig,
+                projectPath: oldMetadata.projectPath,
+                projectName: oldMetadata.projectName,
+                projects: oldMetadata.projects,
+              },
+              project.projectPath
+            ),
           });
 
           const trusted =
@@ -3614,6 +3646,7 @@ export class WorkspaceService extends EventEmitter {
         const runtime = createRuntime(oldMetadata.runtimeConfig, {
           projectPath: configProjectPath,
           workspaceName: oldName,
+          workspacePath: workspace.workspacePath,
         });
 
         const trusted =
@@ -5009,9 +5042,11 @@ export class WorkspaceService extends EventEmitter {
         return Err(resolvedNameValidation.error ?? "Invalid workspace name");
       }
 
+      const sourceWorkspace = this.config.findWorkspace(sourceWorkspaceId);
       const sourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
       });
 
       const newWorkspaceId = this.config.generateStableId();
@@ -5170,6 +5205,7 @@ export class WorkspaceService extends EventEmitter {
       const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
       });
       await copyPlanFileAcrossRuntimes(
         freshSourceRuntime,
@@ -6446,11 +6482,11 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async listWorkspacePathsForFileCompletions(
-    metadata: FrontendWorkspaceMetadata
+    metadata: FrontendWorkspaceMetadata,
+    workspacePath?: string
   ): Promise<string[] | null> {
     if (!isMultiProject(metadata)) {
-      const runtime = createRuntimeForWorkspace(metadata);
-      const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
+      const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
       return this.listGitPathsForFileCompletions(runtime, workspacePath);
     }
 
@@ -6464,6 +6500,21 @@ export class WorkspaceService extends EventEmitter {
         const projectRuntime = createRuntime(metadata.runtimeConfig, {
           projectPath: project.projectPath,
           workspaceName: metadata.name,
+          workspacePath:
+            isSSHRuntime(metadata.runtimeConfig) && workspacePath != null
+              ? getWorkspacePathHintForProject(
+                  {
+                    workspaceId: metadata.id,
+                    workspaceName: metadata.name,
+                    workspacePath,
+                    runtimeConfig: metadata.runtimeConfig,
+                    projectPath: metadata.projectPath,
+                    projectName: metadata.projectName,
+                    projects: metadata.projects,
+                  },
+                  project.projectPath
+                )
+              : undefined,
         });
         const projectWorkspacePath = projectRuntime.getWorkspacePath(
           project.projectPath,
@@ -6526,7 +6577,11 @@ export class WorkspaceService extends EventEmitter {
         const previousIndex = cacheEntry.index;
 
         try {
-          const files = await this.listWorkspacePathsForFileCompletions(metadata);
+          const workspace = this.config.findWorkspace(workspaceId);
+          const files = await this.listWorkspacePathsForFileCompletions(
+            metadata,
+            workspace?.workspacePath
+          );
           cacheEntry.index = files === null ? previousIndex : buildFileCompletionsIndex(files);
           cacheEntry.fetchedAt = Date.now();
         } catch (error) {
@@ -6616,6 +6671,20 @@ export class WorkspaceService extends EventEmitter {
             runtime: createRuntime(metadata.runtimeConfig, {
               projectPath: project.projectPath,
               workspaceName: metadata.name,
+              workspacePath: isSSHRuntime(metadata.runtimeConfig)
+                ? getWorkspacePathHintForProject(
+                    {
+                      workspaceId,
+                      workspaceName: metadata.name,
+                      workspacePath: workspace.workspacePath,
+                      runtimeConfig: metadata.runtimeConfig,
+                      projectPath: metadata.projectPath,
+                      projectName: metadata.projectName,
+                      projects: metadata.projects,
+                    },
+                    project.projectPath
+                  )
+                : undefined,
             }),
           }))
         : undefined;

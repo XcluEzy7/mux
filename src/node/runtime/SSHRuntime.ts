@@ -16,6 +16,7 @@
  */
 
 import { spawn, type ChildProcess } from "child_process";
+import * as crypto from "crypto";
 import * as path from "path";
 import type {
   EnsureReadyOptions,
@@ -35,7 +36,7 @@ import { log } from "@/node/services/log";
 import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
-import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
@@ -43,10 +44,12 @@ import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { syncRuntimeGitSubmodules } from "./submoduleSync";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
+import {
+  buildRemoteProjectLayout,
+  getRemoteWorkspacePath,
+  type RemoteProjectLayout,
+} from "./remoteProjectLayout";
 import { streamToString, shescape } from "./streamUtils";
-
-/** Name of the shared bare repo directory under each project on the remote. */
-const BASE_REPO_DIR = ".mux-base.git";
 
 /** Staging namespace for bundle-imported branch refs. Branches land here instead
  *  of refs/heads/* so they don't collide with branches checked out in worktrees. */
@@ -54,6 +57,59 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
+
+const sharedProjectSyncTails = new Map<string, Promise<void>>();
+
+async function enqueueProjectSync(
+  projectKey: string,
+  abortSignal: AbortSignal | undefined,
+  fn: () => Promise<void>
+): Promise<void> {
+  const previous = sharedProjectSyncTails.get(projectKey) ?? Promise.resolve();
+  let releaseCurrent: (() => void) | undefined;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const tail = previous.then(
+    () => current,
+    () => current
+  );
+  sharedProjectSyncTails.set(projectKey, tail);
+  void tail.finally(() => {
+    if (sharedProjectSyncTails.get(projectKey) === tail) {
+      sharedProjectSyncTails.delete(projectKey);
+    }
+  });
+
+  let onAbort: (() => void) | undefined;
+  const waitForPrevious = previous.catch(() => undefined);
+  const waitForTurn = abortSignal
+    ? Promise.race([
+        waitForPrevious,
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(new Error("Operation aborted"));
+          if (abortSignal.aborted) {
+            onAbort();
+            return;
+          }
+          abortSignal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ])
+    : waitForPrevious;
+
+  try {
+    await waitForTurn;
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+    await fn();
+  } finally {
+    if (onAbort) {
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+    releaseCurrent?.();
+  }
+}
 
 function isGitConfigLockConflict(message: string): boolean {
   return /could not lock config file/i.test(message);
@@ -139,29 +195,18 @@ async function waitForProcessExit(proc: ChildProcess): Promise<number> {
     proc.on("error", (err) => reject(err));
   });
 }
-/** Truncate SSH stderr for error logging (keep first line, max 200 chars) */
-function truncateSSHError(stderr: string): string {
-  const trimmed = stderr.trim();
-  if (!trimmed) return "exit code 255";
-  // Take first line only (SSH errors are usually single-line)
-  const firstLine = trimmed.split("\n")[0];
-  if (firstLine.length <= 200) return firstLine;
-  return firstLine.slice(0, 197) + "...";
-}
-
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
 
 /**
  * Compute the path to the shared bare base repo for a project on the remote.
- * Convention: <srcBaseDir>/<projectName>/.mux-base.git
+ * Convention: <srcBaseDir>/<projectId>/.mux-base.git
  *
  * Exported for unit testing; runtime code should use the private
  * `SSHRuntime.getBaseRepoPath()` method instead.
  */
 export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): string {
-  const projectName = getProjectName(projectPath);
-  return path.posix.join(srcBaseDir, projectName, BASE_REPO_DIR);
+  return buildRemoteProjectLayout(srcBaseDir, projectPath).baseRepoPath;
 }
 
 /**
@@ -175,6 +220,7 @@ export class SSHRuntime extends RemoteRuntime {
   private readonly transport: SSHTransport;
   private readonly ensureReadyProjectPath?: string;
   private readonly ensureReadyWorkspaceName?: string;
+  private readonly currentWorkspacePath?: string;
   /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
   private resolvedBgOutputDir: string | null = null;
 
@@ -184,6 +230,7 @@ export class SSHRuntime extends RemoteRuntime {
     options?: {
       projectPath?: string;
       workspaceName?: string;
+      workspacePath?: string;
     }
   ) {
     super();
@@ -193,6 +240,7 @@ export class SSHRuntime extends RemoteRuntime {
     this.transport = transport;
     this.ensureReadyProjectPath = options?.projectPath;
     this.ensureReadyWorkspaceName = options?.workspaceName;
+    this.currentWorkspacePath = options?.workspacePath;
   }
 
   /**
@@ -235,6 +283,50 @@ export class SSHRuntime extends RemoteRuntime {
     return this.config;
   }
 
+  private getProjectLayout(projectPath: string): RemoteProjectLayout {
+    return buildRemoteProjectLayout(this.config.srcBaseDir, projectPath);
+  }
+
+  private getProjectSyncKey(projectId: string): string {
+    return [
+      this.config.host,
+      this.config.port?.toString() ?? "22",
+      this.config.identityFile ?? "default",
+      this.config.srcBaseDir,
+      projectId,
+    ].join(":");
+  }
+
+  private async computeSnapshotDigest(projectPath: string): Promise<string> {
+    const refsOutput = await new Promise<string>((resolve, reject) => {
+      const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads", "--tags"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
+      proc.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(Buffer.from(chunk)));
+      proc.once("close", (code) => {
+        if (code === 0) {
+          resolve(Buffer.concat(stdoutChunks).toString());
+          return;
+        }
+        const stderrText = Buffer.concat(stderrChunks).toString().trim();
+        reject(
+          new Error(
+            stderrText.length > 0
+              ? stderrText
+              : `git show-ref failed with code ${code ?? "unknown"}`
+          )
+        );
+      });
+      proc.once("error", reject);
+    });
+
+    return crypto.createHash("sha256").update(refsOutput).digest("hex");
+  }
+
   // ===== RemoteRuntime abstract method implementations =====
 
   protected readonly commandPrefix: string = "SSH";
@@ -251,27 +343,15 @@ export class SSHRuntime extends RemoteRuntime {
     return cdCommandForSSH(cwd);
   }
 
-  /**
-   * Handle exit codes for SSH connection pool health tracking.
-   */
-  protected override onExitCode(exitCode: number, _options: ExecOptions, stderr: string): void {
-    // Connection-level failures should inform transport backoff. The meaning of
-    // specific exit codes (like 255) is transport-dependent.
-    if (this.transport.isConnectionFailure(exitCode, stderr)) {
-      this.transport.reportFailure(truncateSSHError(stderr));
-    } else {
-      this.transport.markHealthy();
-    }
-  }
-
   protected async spawnRemoteProcess(
     fullCommand: string,
-    options: ExecOptions
+    options: ExecOptions & { deadlineMs?: number }
   ): Promise<SpawnResult> {
     return this.transport.spawnRemoteProcess(fullCommand, {
       forcePTY: options.forcePTY,
       timeout: options.timeout,
       abortSignal: options.abortSignal,
+      deadlineMs: options.deadlineMs,
     });
   }
 
@@ -340,8 +420,15 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
-    const projectName = getProjectName(projectPath);
-    return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
+    if (
+      this.currentWorkspacePath &&
+      this.ensureReadyProjectPath === projectPath &&
+      this.ensureReadyWorkspaceName === workspaceName
+    ) {
+      return this.currentWorkspacePath;
+    }
+
+    return getRemoteWorkspacePath(this.getProjectLayout(projectPath), workspaceName);
   }
 
   /**
@@ -349,7 +436,7 @@ export class SSHRuntime extends RemoteRuntime {
    * All worktree-based workspaces share this object store.
    */
   private getBaseRepoPath(projectPath: string): string {
-    return computeBaseRepoPath(this.config.srcBaseDir, projectPath);
+    return this.getProjectLayout(projectPath).baseRepoPath;
   }
 
   /**
@@ -362,7 +449,8 @@ export class SSHRuntime extends RemoteRuntime {
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<string> {
-    const baseRepoPath = this.getBaseRepoPath(projectPath);
+    const layout = this.getProjectLayout(projectPath);
+    const baseRepoPath = layout.baseRepoPath;
     const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
 
     const check = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
@@ -466,6 +554,35 @@ export class SSHRuntime extends RemoteRuntime {
     return false;
   }
 
+  private async resolveWorktreeBaseRepoPath(
+    projectPath: string,
+    workspacePath: string,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    const fallbackBaseRepoPath = this.getBaseRepoPath(projectPath);
+
+    try {
+      const result = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --path-format=absolute --git-common-dir`,
+        {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        }
+      );
+      const resolvedBaseRepoPath = result.stdout.trim();
+      if (result.exitCode === 0 && resolvedBaseRepoPath.length > 0) {
+        return resolvedBaseRepoPath;
+      }
+    } catch {
+      // Fall back to the canonical hashed layout when the existing workspace cannot report its
+      // common git dir (for example, if the directory is already partially missing/corrupted).
+    }
+
+    return fallbackBaseRepoPath;
+  }
+
   /**
    * Detect whether a remote workspace is a git worktree (`.git` is a file)
    * vs a legacy full clone (`.git` is a directory).
@@ -505,115 +622,6 @@ export class SSHRuntime extends RemoteRuntime {
     }
   }
 
-  private async persistWorkspaceBranchMapping(
-    projectPath: string,
-    workspaceName: string,
-    branchName: string
-  ): Promise<void> {
-    const branchMap = await this.readWorkspaceBranchMap(projectPath);
-    branchMap[workspaceName] = branchName;
-    await this.writeWorkspaceBranchMap(projectPath, branchMap);
-  }
-
-  private async updateWorkspaceBranchMapping(
-    projectPath: string,
-    oldWorkspaceName: string,
-    newWorkspaceName: string
-  ): Promise<void> {
-    const branchMap = await this.readWorkspaceBranchMap(projectPath);
-    const branchName = branchMap[oldWorkspaceName]?.trim() || oldWorkspaceName;
-    delete branchMap[oldWorkspaceName];
-    branchMap[newWorkspaceName] = branchName;
-    await this.writeWorkspaceBranchMap(projectPath, branchMap);
-  }
-
-  private async getPersistedWorkspaceBranchName(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<string | null> {
-    const branchName = (await this.readWorkspaceBranchMap(projectPath))[workspaceName]?.trim();
-    return branchName || null;
-  }
-
-  private async deletePersistedWorkspaceBranchMapping(
-    projectPath: string,
-    workspaceName: string
-  ): Promise<void> {
-    try {
-      const branchMap = await this.readWorkspaceBranchMap(projectPath);
-      if (!(workspaceName in branchMap)) {
-        return;
-      }
-      delete branchMap[workspaceName];
-      await this.writeWorkspaceBranchMap(projectPath, branchMap);
-    } catch {
-      // Best-effort cleanup after delete; future creates overwrite any stale entry.
-    }
-  }
-
-  private async readWorkspaceBranchMap(projectPath: string): Promise<Record<string, string>> {
-    try {
-      const contents = await streamToString(
-        this.readFile(this.getWorkspaceBranchMapPath(projectPath))
-      );
-      const parsed: unknown = JSON.parse(contents);
-      if (typeof parsed !== "object" || parsed === null) {
-        return {};
-      }
-      return Object.fromEntries(
-        Object.entries(parsed).filter(([workspaceName, branchName]) => {
-          return (
-            workspaceName.trim().length > 0 &&
-            typeof branchName === "string" &&
-            branchName.trim().length > 0
-          );
-        })
-      );
-    } catch {
-      return {};
-    }
-  }
-
-  private async writeWorkspaceBranchMap(
-    projectPath: string,
-    branchMap: Record<string, string>
-  ): Promise<void> {
-    const branchMapPath = this.getWorkspaceBranchMapPath(projectPath);
-    if (Object.keys(branchMap).length === 0) {
-      await execBuffered(this, `rm -f ${this.quoteForRemote(branchMapPath)}`, {
-        cwd: "/tmp",
-        timeout: 10,
-      }).catch(() => undefined);
-      return;
-    }
-
-    const parentDir = path.posix.dirname(branchMapPath);
-    const mkdirResult = await execBuffered(this, `mkdir -p ${this.quoteForRemote(parentDir)}`, {
-      cwd: "/tmp",
-      timeout: 10,
-    });
-    if (mkdirResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to prepare remote workspace branch map: ${mkdirResult.stderr || mkdirResult.stdout}`
-      );
-    }
-
-    const writer = this.writeFile(branchMapPath).getWriter();
-    try {
-      await writer.write(new TextEncoder().encode(`${JSON.stringify(branchMap, null, 2)}\n`));
-    } finally {
-      await writer.close();
-    }
-  }
-
-  private getWorkspaceBranchMapPath(projectPath: string): string {
-    return path.posix.join(
-      this.config.srcBaseDir,
-      getProjectName(projectPath),
-      ".mux-workspace-branches.json"
-    );
-  }
-
   /**
    * Resolve the bundle staging ref for the trunk branch.
    * Returns refs/mux-bundle/<trunkBranch> if it exists, otherwise falls back
@@ -651,27 +659,9 @@ export class SSHRuntime extends RemoteRuntime {
     return null;
   }
 
-  private async resolveLocalRefOid(projectPath: string, ref: string): Promise<string | null> {
-    try {
-      using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--verify", ref]);
-      const { stdout } = await proc.result;
-      const oid = stdout.trim();
-      return oid.length > 0 ? oid : null;
-    } catch {
-      return null;
-    }
-  }
-
   private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
     try {
-      using proc = execFileAsync("git", [
-        "-C",
-        projectPath,
-        "for-each-ref",
-        "--format=%(refname) %(objectname)",
-        "refs/heads",
-        "refs/tags",
-      ]);
+      using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads", "--tags"]);
       const { stdout } = await proc.result;
       return stdout
         .split("\n")
@@ -690,7 +680,7 @@ export class SSHRuntime extends RemoteRuntime {
   ): Promise<string | null> {
     const result = await execBuffered(
       this,
-      `git -C ${baseRepoPathArg} for-each-ref --format='%(refname) %(objectname)' ${BUNDLE_REF_PREFIX} refs/tags`,
+      `git -C ${baseRepoPathArg} for-each-ref --format='%(objectname) %(refname)' ${BUNDLE_REF_PREFIX} refs/tags`,
       { cwd: "/tmp", timeout: 20, abortSignal }
     );
     if (result.exitCode !== 0) {
@@ -701,68 +691,21 @@ export class SSHRuntime extends RemoteRuntime {
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-      .map((line) =>
-        line.startsWith(BUNDLE_REF_PREFIX) ? line.replace(BUNDLE_REF_PREFIX, "refs/heads/") : line
-      )
+      .map((line) => {
+        const separator = line.indexOf(" ");
+        if (separator === -1) {
+          return line;
+        }
+
+        const oid = line.slice(0, separator);
+        const refName = line.slice(separator + 1);
+        const normalizedRefName = refName.startsWith(BUNDLE_REF_PREFIX)
+          ? refName.replace(BUNDLE_REF_PREFIX, "refs/heads/")
+          : refName;
+        return `${oid} ${normalizedRefName}`;
+      })
       .sort()
       .join("\n");
-  }
-
-  private async shouldReuseCurrentBundleTrunk(
-    projectPath: string,
-    trunkBranch: string,
-    initLogger: InitLogger,
-    abortSignal?: AbortSignal
-  ): Promise<boolean> {
-    const localTrunkOid = await this.resolveLocalRefOid(projectPath, trunkBranch);
-    if (localTrunkOid == null) {
-      return false;
-    }
-
-    try {
-      const remoteTrunkRef = `${BUNDLE_REF_PREFIX}${trunkBranch}`;
-      const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
-      const remoteTrunkResult = await execBuffered(
-        this,
-        `git -C ${baseRepoPathArg} rev-parse --verify ${shescape.quote(remoteTrunkRef)}`,
-        { cwd: "/tmp", timeout: 10, abortSignal }
-      );
-      if (remoteTrunkResult.exitCode !== 0) {
-        return false;
-      }
-
-      const remoteTrunkOid = remoteTrunkResult.stdout.trim();
-      if (remoteTrunkOid.length === 0 || remoteTrunkOid !== localTrunkOid) {
-        return false;
-      }
-
-      const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
-      if (localRefManifest == null) {
-        return false;
-      }
-
-      const remoteRefManifest = await this.resolveRemoteSyncRefManifest(
-        baseRepoPathArg,
-        abortSignal
-      );
-      if (remoteRefManifest == null || remoteRefManifest !== localRefManifest) {
-        return false;
-      }
-    } catch (error) {
-      log.debug("Failed to probe shared bundle trunk; falling back to sync", {
-        projectPath,
-        trunkBranch,
-        error: getErrorMessage(error),
-      });
-      return false;
-    }
-
-    // Re-uploading the full bundle adds startup latency even when the shared base already
-    // has the exact trunk snapshot this workspace will branch from.
-    initLogger.logStep(
-      `Remote bundle already matches ${trunkBranch} (${localTrunkOid.slice(0, 12)}); skipping sync`
-    );
-    return true;
   }
 
   private async refreshBaseRepoOrigin(
@@ -981,12 +924,10 @@ export class SSHRuntime extends RemoteRuntime {
    */
   private async transferBundleToRemote(
     projectPath: string,
+    remoteBundlePath: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<string> {
-    const timestamp = Date.now();
-    const remoteBundlePath = `~/.mux-bundle-${timestamp}.bundle`;
-
     await this.transport.acquireConnection({
       abortSignal,
       onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
@@ -1080,49 +1021,126 @@ export class SSHRuntime extends RemoteRuntime {
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
 
-    const remoteBundlePath = await this.transferBundleToRemote(
-      projectPath,
-      initLogger,
-      abortSignal
-    );
-    const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
+    const layout = this.getProjectLayout(projectPath);
+    const currentSnapshotPath = layout.currentSnapshotPath;
+    const projectKey = this.getProjectSyncKey(layout.projectId);
 
-    try {
-      // Import branches and tags from the bundle into the shared bare repo.
-      // Branches land in refs/mux-bundle/* (staging namespace) instead of
-      // refs/heads/* to avoid colliding with branches checked out in existing
-      // worktrees — git refuses to update any ref checked out in a worktree.
-      // Tags go directly to refs/tags/* (they're never checked out).
-      initLogger.logStep("Importing bundle into shared base repository...");
-      const fetchResult = await execBuffered(
+    await enqueueProjectSync(projectKey, abortSignal, async () => {
+      if (abortSignal?.aborted) {
+        throw new Error("Operation aborted");
+      }
+
+      const snapshotDigest = await this.computeSnapshotDigest(projectPath);
+      const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+
+      const snapshotStatusCheck = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
-        { cwd: "/tmp", timeout: 300, abortSignal }
+        [
+          'current_snapshot=""',
+          `if test -f ${this.quoteForRemote(currentSnapshotPath)}; then`,
+          `  current_snapshot=$(tr -d '\\n' < ${this.quoteForRemote(currentSnapshotPath)})`,
+          "fi",
+          `if test "$current_snapshot" = ${shescape.quote(snapshotDigest)}; then`,
+          `  bundle_ref=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+          '  if test -n "$bundle_ref"; then',
+          "    echo reusable",
+          "  else",
+          "    echo stale-current",
+          "  fi",
+          "else",
+          "  echo missing",
+          "fi",
+        ].join("\n"),
+        { cwd: "/tmp", timeout: 10, abortSignal }
       );
-      if (fetchResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
+      const snapshotStatus = snapshotStatusCheck.stdout.trim();
+      if (snapshotStatus === "reusable") {
+        const localRefManifest = await this.resolveLocalSyncRefManifest(projectPath);
+        const remoteRefManifest =
+          localRefManifest == null
+            ? null
+            : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
+        if (localRefManifest != null && remoteRefManifest === localRefManifest) {
+          await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+          initLogger.logStep("Reusing existing remote project snapshot");
+          return;
+        }
+        initLogger.logStep(
+          "Remote snapshot marker drifted from imported refs; reimporting bundle..."
+        );
+      }
+      if (snapshotStatus === "stale-current") {
+        initLogger.logStep(
+          "Remote snapshot marker found without matching imported refs; reimporting bundle..."
         );
       }
 
-      // Keep the bare base repo's origin aligned with the local project so later
-      // fetchOriginTrunk() calls base new worktrees on the intended remote.
-      await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-
-      initLogger.logStep("Repository synced to base successfully");
-    } finally {
-      // Best-effort cleanup of the remote bundle file.
-      try {
-        await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
-          cwd: "/tmp",
-          timeout: 10,
-        });
-      } catch {
-        // Ignore cleanup errors.
+      // Snapshot markers stay deterministic, but the uploaded bundle itself must use
+      // a per-attempt temp path so concurrent Mux processes do not stream into the same file.
+      const remoteBundlePath = path.posix.join(
+        "~/.mux-bundles",
+        layout.projectId,
+        `${snapshotDigest}.${crypto.randomUUID()}.bundle`
+      );
+      const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
+      const remoteBundleParentDir = path.posix.dirname(remoteBundlePath);
+      const prepareRemoteDirs = await execBuffered(
+        this,
+        `mkdir -p ${this.quoteForRemote(remoteBundleParentDir)} ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
+        { cwd: "/tmp", timeout: 10, abortSignal }
+      );
+      if (prepareRemoteDirs.exitCode !== 0) {
+        throw new Error(
+          `Failed to prepare remote snapshot directories: ${prepareRemoteDirs.stderr || prepareRemoteDirs.stdout}`
+        );
       }
-    }
+
+      await this.transferBundleToRemote(projectPath, remoteBundlePath, initLogger, abortSignal);
+
+      try {
+        // Import branches and tags from the bundle into the shared bare repo.
+        // Branches land in refs/mux-bundle/* (staging namespace) instead of
+        // refs/heads/* to avoid colliding with branches checked out in existing
+        // worktrees — git refuses to update any ref checked out in a worktree.
+        // Tags go directly to refs/tags/* (they're never checked out).
+        initLogger.logStep("Importing bundle into shared base repository...");
+        const fetchResult = await execBuffered(
+          this,
+          `git -C ${baseRepoPathArg} fetch --prune --prune-tags ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
+          { cwd: "/tmp", timeout: 300, abortSignal }
+        );
+        if (fetchResult.exitCode !== 0) {
+          throw new Error(
+            `Failed to import bundle into base repo: ${fetchResult.stderr || fetchResult.stdout}`
+          );
+        }
+
+        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+
+        const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
+        try {
+          await currentSnapshotWriter.write(new TextEncoder().encode(`${snapshotDigest}\n`));
+        } finally {
+          await currentSnapshotWriter.close();
+        }
+
+        initLogger.logStep("Repository synced to base successfully");
+      } finally {
+        // Best-effort cleanup of the remote bundle file.
+        try {
+          await execBuffered(this, `rm -f ${remoteBundlePathArg}`, {
+            cwd: "/tmp",
+            timeout: 10,
+          });
+        } catch {
+          // Ignore cleanup errors.
+        }
+      }
+    });
   }
 
   /** Get origin URL from local project for setting on the remote base repo. */
@@ -1136,8 +1154,9 @@ export class SSHRuntime extends RemoteRuntime {
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     try {
       const { projectPath, directoryName, initLogger, abortSignal } = params;
+      const layout = this.getProjectLayout(projectPath);
       // Workspace directories follow the persisted workspace name; branch checkout happens later.
-      const workspacePath = this.getWorkspacePath(projectPath, directoryName);
+      const workspacePath = getRemoteWorkspacePath(layout, directoryName);
 
       // Prepare parent directory for git clone (fast - returns immediately)
       // Note: git clone will create the workspace directory itself during initWorkspace,
@@ -1173,7 +1192,6 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      await this.persistWorkspaceBranchMapping(projectPath, directoryName, params.branchName);
       initLogger.logStep("Remote workspace prepared");
 
       return {
@@ -1246,64 +1264,43 @@ export class SSHRuntime extends RemoteRuntime {
       needsWorktreeCheckout = true;
     }
 
-    let shouldSyncBaseRepo = needsWorktreeCheckout;
-    if (shouldSyncBaseRepo) {
-      shouldSyncBaseRepo = !(await this.shouldReuseCurrentBundleTrunk(
-        projectPath,
-        trunkBranch,
-        initLogger,
-        abortSignal
-      ));
-    }
-
     if (needsWorktreeCheckout) {
-      if (shouldSyncBaseRepo) {
-        // SSH workspace initialization owns repo materialization: it syncs the project into
-        // the shared base repo, checks out the worktree, and then materializes submodules
-        // before repo-controlled init hooks run.
-        initLogger.logStep("Syncing project files to remote...");
-        const maxSyncAttempts = 3;
-        for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
-          try {
-            await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-            break;
-          } catch (error) {
-            const errorMsg = getErrorMessage(error);
-            const isRetryable =
-              errorMsg.includes("pack-objects died") ||
-              errorMsg.includes("Connection reset") ||
-              errorMsg.includes("Connection closed") ||
-              errorMsg.includes("Broken pipe") ||
-              errorMsg.includes("EPIPE");
+      // SSH workspace initialization owns repo materialization: it syncs the project into
+      // the shared base repo, checks out the worktree, and then materializes submodules
+      // before repo-controlled init hooks run.
+      initLogger.logStep("Syncing project files to remote...");
+      const maxSyncAttempts = 3;
+      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
+        try {
+          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+          break;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error);
+          const isRetryable =
+            errorMsg.includes("pack-objects died") ||
+            errorMsg.includes("Connection reset") ||
+            errorMsg.includes("Connection closed") ||
+            errorMsg.includes("Broken pipe") ||
+            errorMsg.includes("EPIPE");
 
-            if (!isRetryable || attempt === maxSyncAttempts) {
-              throw new Error(`Failed to sync project: ${errorMsg}`);
-            }
-
-            log.info(
-              `Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`
-            );
-            initLogger.logStep(
-              `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
-            );
-            await new Promise((r) => setTimeout(r, attempt * 1000));
+          if (!isRetryable || attempt === maxSyncAttempts) {
+            throw new Error(`Failed to sync project: ${errorMsg}`);
           }
-        }
-        initLogger.logStep("Files synced successfully");
-      }
 
-      // Even when the shared base repo is already current, a brand-new workspace still needs
-      // git worktree add so the checkout exists before init hooks or submodule sync run.
-      // Re-enter ensureBaseRepo() here so older shared repos still get their local core.bare
-      // config normalized before we reuse them for a fresh worktree checkout.
+          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
+          initLogger.logStep(
+            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+          );
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+      }
+      initLogger.logStep("Files synced successfully");
+
+      // A brand-new workspace still needs git worktree add so the checkout exists before init hooks
+      // or submodule sync run. Re-enter ensureBaseRepo() here so older shared repos still get their
+      // local core.bare config normalized before we reuse them for a fresh worktree checkout.
       const baseRepoPath = this.getBaseRepoPath(projectPath);
       const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
-
-      if (!shouldSyncBaseRepo) {
-        // Skipping the bundle upload must still refresh origin in case the user repointed
-        // the local remote without changing trunk commits.
-        await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
-      }
 
       // Fetch latest from origin in the base repo (best-effort) so new branches
       // can start from the latest upstream state.
@@ -1534,9 +1531,8 @@ export class SSHRuntime extends RemoteRuntime {
     if (abortSignal?.aborted) {
       return { success: false, error: "Rename operation aborted" };
     }
-    // Compute workspace paths using canonical method
     const oldPath = this.getWorkspacePath(projectPath, oldName);
-    const newPath = this.getWorkspacePath(projectPath, newName);
+    const newPath = path.posix.join(path.posix.dirname(oldPath), newName);
 
     try {
       const expandedOldPath = expandTildeForSSH(oldPath);
@@ -1547,8 +1543,11 @@ export class SSHRuntime extends RemoteRuntime {
 
       let moveCommand: string;
       if (isWorktree) {
-        // Worktree: use `git worktree move` to keep base repo metadata consistent.
-        const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
+        // Worktree: use `git worktree move` to keep the workspace registered in whichever
+        // shared base repo originally created it, including upgraded legacy SSH layouts.
+        const baseRepoPathArg = expandTildeForSSH(
+          await this.resolveWorktreeBaseRepoPath(projectPath, oldPath, abortSignal)
+        );
         moveCommand = `git -C ${baseRepoPathArg} worktree move ${expandedOldPath} ${expandedNewPath}`;
       } else {
         // Legacy full clone: plain mv.
@@ -1584,7 +1583,6 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      await this.updateWorkspaceBranchMapping(projectPath, oldName, newName);
       return { success: true, oldPath, newPath };
     } catch (error) {
       return {
@@ -1609,7 +1607,6 @@ export class SSHRuntime extends RemoteRuntime {
     // Disable git hooks for untrusted projects
     const nhp = gitNoHooksPrefix(trusted);
 
-    // Compute workspace path using canonical method
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
 
     try {
@@ -1710,7 +1707,6 @@ export class SSHRuntime extends RemoteRuntime {
       // Handle check results
       if (checkExitCode === 3) {
         // Directory doesn't exist - deletion is idempotent (success).
-        await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
         return { success: true, deletedPath };
       }
 
@@ -1744,15 +1740,17 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      const branchToDelete =
-        (await this.getPersistedWorkspaceBranchName(projectPath, workspaceName)) ?? workspaceName;
+      const branchToDelete = await this.resolveCheckedOutBranch(deletedPath, abortSignal, 10);
 
       // Detect if workspace is a worktree (.git is a file) vs a legacy full clone (.git is a directory).
       const isWorktree = await this.isWorktreeWorkspace(deletedPath, abortSignal);
 
       if (isWorktree) {
-        // Worktree: use `git worktree remove` to clean up the base repo's worktree metadata.
-        const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
+        // Worktree: use `git worktree remove` against the actual common git dir for this
+        // workspace so upgraded legacy SSH worktrees keep their original base repo metadata.
+        const baseRepoPathArg = expandTildeForSSH(
+          await this.resolveWorktreeBaseRepoPath(projectPath, deletedPath, abortSignal)
+        );
         const removeCmd = force
           ? `${nhp}git -C ${baseRepoPathArg} worktree remove --force ${this.quoteForRemote(deletedPath)}`
           : `${nhp}git -C ${baseRepoPathArg} worktree remove ${this.quoteForRemote(deletedPath)}`;
@@ -1818,7 +1816,6 @@ export class SSHRuntime extends RemoteRuntime {
         }
       }
 
-      await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
       return { success: true, deletedPath };
     } catch (error) {
       return { success: false, error: `Failed to delete directory: ${getErrorMessage(error)}` };
@@ -1828,9 +1825,11 @@ export class SSHRuntime extends RemoteRuntime {
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
     const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger, abortSignal } = params;
 
-    // Compute workspace paths using canonical method
     const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
-    const newWorkspacePath = this.getWorkspacePath(projectPath, newWorkspaceName);
+    const newWorkspacePath = path.posix.join(
+      path.posix.dirname(sourceWorkspacePath),
+      newWorkspaceName
+    );
 
     // For SSH commands, tilde must be expanded using $HOME - plain quoting won't expand it.
     const sourceWorkspacePathArg = expandTildeForSSH(sourceWorkspacePath);
