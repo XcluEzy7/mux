@@ -248,7 +248,7 @@ function useWorkspaceAttentionSubscription(
 // highlighting the whole sidebar before a reorder gesture locks in.
 // pr-2 matches AgentListItem LIST_ITEM_BASE_CLASSES so project kebab aligns with workspace rows.
 const PROJECT_ITEM_BASE_CLASS =
-  "group sticky top-0 z-10 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectFallbackLabel(projectPath: string): string {
   const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
@@ -1656,7 +1656,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           className={cn(
             // The sidebar doubles as a drag surface, so keep copy selection disabled
             // unless a child input explicitly opts back into text selection.
-            "font-primary bg-surface-primary border-border-light flex flex-1 select-none flex-col overflow-hidden border-r",
+            "font-primary bg-surface-primary border-border-light relative flex flex-1 select-none flex-col overflow-hidden border-r",
             // In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)
             isDesktopMode() && collapsed && "border-r-0"
           )}
@@ -3045,6 +3045,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             prefix="Failed to remove section"
             onDismiss={sectionRemoveError.clearError}
           />
+          {!(isDesktopMode() && collapsed) && (
+            // Keep the sidebar divider above sticky row content and scroll-layer visuals.
+            <div
+              aria-hidden
+              className="bg-border-light pointer-events-none absolute inset-y-0 right-0 z-40 w-px"
+            />
+          )}
         </div>
       </DndProvider>
     </TitleEditProvider>
