@@ -9,6 +9,7 @@ import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { normalizeTaskSettings } from "@/common/types/tasks";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
@@ -151,6 +152,7 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
+import { findWorkspaceEntry } from "@/node/services/taskUtils";
 import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -2725,8 +2727,42 @@ export class WorkspaceService extends EventEmitter {
       this.initAbortControllers.delete(workspaceId);
     }
 
+    const persistedWorkspace = this.config.findWorkspace(workspaceId);
+
     // Try to remove from runtime (filesystem)
     try {
+      if (!force) {
+        const config = this.config.loadConfigOrDefault();
+        const taskSettings = normalizeTaskSettings(config.taskSettings);
+        if (
+          taskSettings.preserveSubagentsUntilArchive &&
+          this.taskService?.hasCompletedDescendants?.(workspaceId)
+        ) {
+          const persistedWorkspaceEntry = findWorkspaceEntry(config, workspaceId);
+          const isArchived =
+            persistedWorkspaceEntry != null &&
+            isWorkspaceArchived(
+              persistedWorkspaceEntry.workspace.archivedAt,
+              persistedWorkspaceEntry.workspace.unarchivedAt
+            );
+
+          // Keep the whole parentWorkspaceId chain intact while completed descendants still exist.
+          // Unarchived ancestors must be archived first so descendant cleanup can safely walk that lineage.
+          if (!isArchived) {
+            return Err(
+              "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+            );
+          }
+
+          // Archived parents can still retain completed descendants while cleanup waits on
+          // prerequisites like pending patch artifacts. Keep removal blocked until that cleanup
+          // finishes so descendants do not lose the archived ancestor that makes them eligible.
+          return Err(
+            "This workspace still has completed sub-agent workspaces pending cleanup. Wait for cleanup to finish, or force-remove the workspace."
+          );
+        }
+      }
+
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
       //
       // IMPORTANT: AIService forwards "stream-abort" asynchronously after partial cleanup. If we roll up
@@ -2807,7 +2843,7 @@ export class WorkspaceService extends EventEmitter {
         const metadata = metadataResult.data;
         const configSnapshot = this.config.loadConfigOrDefault();
 
-        const persistedWorkspacePath = this.config.findWorkspace(workspaceId)?.workspacePath;
+        const persistedWorkspacePath = persistedWorkspace?.workspacePath;
 
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
@@ -4163,6 +4199,13 @@ export class WorkspaceService extends EventEmitter {
           });
           await this.emitCurrentWorkspaceMetadata(workspaceId);
         }
+      }
+
+      // Best-effort cleanup of preserved completed descendants after archive persistence succeeds.
+      try {
+        await this.taskService?.cleanupReportedDescendantsAfterArchive?.(workspaceId);
+      } catch (error) {
+        log.error("Failed to cleanup reported descendants after archive", { workspaceId, error });
       }
 
       return Ok({ kind: "archived" as const });
