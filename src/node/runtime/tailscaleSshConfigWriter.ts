@@ -8,7 +8,6 @@
  */
 
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -137,8 +136,10 @@ export async function ensureTailscaleSshConfig(opts: TailscaleSshConfigOptions):
 export async function removeTailscaleSshConfig(sshConfigPath?: string): Promise<void> {
   const configPath = sshConfigPath ?? path.join(os.homedir(), ".ssh", "config");
 
-  if (!fs.existsSync(configPath)) {
-    return;
+  try {
+    await fsPromises.access(configPath);
+  } catch {
+    return; // File doesn't exist
   }
 
   const { content: existingContent, mode } = await loadSSHConfigContent(configPath);
