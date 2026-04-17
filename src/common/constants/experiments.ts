@@ -17,6 +17,9 @@ export const EXPERIMENT_IDS = {
   ADVISOR_TOOL: "advisor-tool",
   WORKSPACE_HEARTBEATS: "workspace-heartbeats",
   PORTABLE_DESKTOP: "portable-desktop",
+  REMOTE_OAUTH_VISIBLE_URL: "remote-oauth-visible-url",
+  REMOTE_OAUTH_MANUAL_CALLBACK: "remote-oauth-manual-callback",
+  REMOTE_OAUTH_BROWSER_FLOW: "remote-oauth-browser-flow",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -138,6 +141,33 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     enabledByDefault: false,
     userOverridable: true,
     platformRestriction: ["linux"],
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.REMOTE_OAUTH_VISIBLE_URL]: {
+    id: EXPERIMENT_IDS.REMOTE_OAUTH_VISIBLE_URL,
+    name: "Visible OAuth URLs",
+    description:
+      "Always display OAuth authorize URLs as visible, selectable text during sign-in — useful when accessing Mux from a remote server where browser auto-open and clipboard may not work",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.REMOTE_OAUTH_MANUAL_CALLBACK]: {
+    id: EXPERIMENT_IDS.REMOTE_OAUTH_MANUAL_CALLBACK,
+    name: "Manual OAuth Callback",
+    description:
+      "Allow completing OAuth sign-in by pasting the callback redirect URL — a fallback for remote servers without SSH port forwarding",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.REMOTE_OAUTH_BROWSER_FLOW]: {
+    id: EXPERIMENT_IDS.REMOTE_OAUTH_BROWSER_FLOW,
+    name: "Browser OAuth on Remote Servers",
+    description:
+      "Show the 'Connect (Browser)' button for ChatGPT OAuth even on remote servers — the authorize URL will be shown as visible text for copying to another device",
+    enabledByDefault: false,
+    userOverridable: true,
     showInSettings: true,
   },
 };
