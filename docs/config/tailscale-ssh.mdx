@@ -13,11 +13,11 @@ Mux supports Tailscale SSH to enable remote editor connections (like Zed or VS C
 
 ## Recommended Setup: Tailscale SSH Server Mode
 
-On the machine running Mux as a server, enable Tailscale SSH:
+Tailscale SSH server mode is supported on Linux and macOS. On the machine running Mux as a server, enable it with:
 
 ```bash
 # Linux/macOS
-tailscale up --ssh
+tailscale set --ssh
 
 # Verify SSH is enabled
 tailscale status --self
@@ -34,8 +34,9 @@ Host mux-server
   HostName your-server.tailnet.ts.net
   User <your-tailscale-user>
   ProxyCommand tailscale nc %h %p
-  ForwardAgent yes
 ```
+
+If you decide to use SSH agent forwarding, add `ForwardAgent yes` explicitly only after considering the security tradeoffs for your workflow.
 
 Replace:
 
