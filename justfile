@@ -32,7 +32,7 @@ mac: build
 
 # Full rebuild + replace system CLI with repo-built binary
 #
-# Usage: just cli
+# Usage: just cli [dry-run=true]
 #
 # This recipe:
 # 1. Builds the project (make build)
@@ -41,10 +41,15 @@ mac: build
 # 4. Creates symlink to dist/cli/index.js at the same location
 # 5. Verifies the new CLI works
 #
+# With dry-run=true: Shows what would be done without making changes
+#
 # To undo: just unlink-cli
-cli: build
+cli:
     #!/usr/bin/env bash
     set -euo pipefail 2>/dev/null || set -euo  # fallback for bash 3.2 (macOS)
+
+    # Get DRYRUN from just args, default to false
+    DRYRUN="${DRYRUN:-false}"
 
     CLI_SRC="$(pwd)/dist/cli/index.js"
 
@@ -58,28 +63,40 @@ cli: build
     if [ -n "$EXISTING" ]; then
         REAL=$(readlink -f "$EXISTING" 2>/dev/null || readlink "$EXISTING" 2>/dev/null || echo "$EXISTING")
         DEST="$EXISTING"
-        echo "Found existing mux at $DEST (→ $REAL)"
+        if [ "$DRYRUN" = "true" ]; then
+            echo "DRY RUN: Found existing mux at $DEST (→ $REAL)"
+        else
+            echo "Found existing mux at $DEST (→ $REAL)"
+        fi
 
         # Use sudo for system paths
         if [ -w "$(dirname "$DEST")" ]; then
             RM="rm -f"
             LN="ln -sf"
         else
-            echo "System path detected — using sudo"
+            if [ "$DRYRUN" = "true" ]; then
+                echo "DRY RUN: System path detected — would use sudo"
+            else
+                echo "System path detected — using sudo"
+            fi
             RM="sudo rm -f"
             LN="sudo ln -sf"
         fi
 
-        # Backup existing binary/symlink before removing
-        BACKUP="${DEST}.bak-$$"
-        if [ -L "$DEST" ]; then
-            cp -P "$DEST" "$BACKUP" 2>/dev/null || true
-            $RM "$DEST"
-            echo "Removed symlink $DEST (backup: $BACKUP)"
-        elif [ -f "$DEST" ]; then
-            cp "$DEST" "$BACKUP" 2>/dev/null || true
-            $RM "$DEST"
-            echo "Removed binary $DEST (backup: $BACKUP)"
+        if [ "$DRYRUN" = "true" ]; then
+            echo "DRY RUN: Would backup and remove existing binary/symlink"
+        else
+            # Backup existing binary/symlink before removing
+            BACKUP="${DEST}.bak-$$"
+            if [ -L "$DEST" ]; then
+                cp -P "$DEST" "$BACKUP" 2>/dev/null || true
+                $RM "$DEST"
+                echo "Removed symlink $DEST (backup: $BACKUP)"
+            elif [ -f "$DEST" ]; then
+                cp "$DEST" "$BACKUP" 2>/dev/null || true
+                $RM "$DEST"
+                echo "Removed binary $DEST (backup: $BACKUP)"
+            fi
         fi
     else
         # Fallback: install to ~/.local/bin
@@ -88,31 +105,41 @@ cli: build
         RM="rm -f"
         LN="ln -sf"
         BACKUP=""
-        echo "No existing mux found — installing to $DEST"
-    fi
-
-    # Create symlink to repo-built CLI
-    $LN "$CLI_SRC" "$DEST"
-    echo "Linked $DEST → $CLI_SRC"
-
-    # Verify the new CLI works
-    hash -r 2>/dev/null || true
-    export PATH="$(dirname "$DEST"):$PATH"
-    if ! mux --version; then
-        echo "Error: New CLI failed to run" >&2
-        # Attempt rollback
-        if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then
-            echo "Attempting rollback..."
-            $RM "$DEST" 2>/dev/null || true
-            mv "$BACKUP" "$DEST" 2>/dev/null && echo "Restored backup"
+        if [ "$DRYRUN" = "true" ]; then
+            echo "DRY RUN: No existing mux found — would install to $DEST"
+        else
+            echo "No existing mux found — installing to $DEST"
         fi
-        exit 1
     fi
 
-    # Clean up backup on success
-    [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && rm -f "$BACKUP" 2>/dev/null
+    if [ "$DRYRUN" = "true" ]; then
+        echo "DRY RUN: Would create symlink $DEST → $CLI_SRC"
+        echo "DRY RUN: Would verify CLI works with 'mux --version'"
+        echo "DRY RUN: CLI installation completed successfully (no changes made)"
+    else
+        # Create symlink to repo-built CLI
+        $LN "$CLI_SRC" "$DEST"
+        echo "Linked $DEST → $CLI_SRC"
 
-    echo "CLI installed successfully"
+        # Verify the new CLI works
+        hash -r 2>/dev/null || true
+        export PATH="$(dirname "$DEST"):$PATH"
+        if ! mux --version; then
+            echo "Error: New CLI failed to run" >&2
+            # Attempt rollback
+            if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then
+                echo "Attempting rollback..."
+                $RM "$DEST" 2>/dev/null || true
+                mv "$BACKUP" "$DEST" 2>/dev/null && echo "Restored backup"
+            fi
+            exit 1
+        fi
+
+        # Clean up backup on success
+        [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && rm -f "$BACKUP" 2>/dev/null
+
+        echo "CLI installed successfully"
+    fi
 
 # Remove the dev CLI symlink created by `just cli`
 #
