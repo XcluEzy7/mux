@@ -24,6 +24,7 @@ const CACHE_TTL_MS = 60_000;
 
 let cachedResult: TailscaleInfo | null = null;
 let cacheExpiresAt = 0;
+let inFlightDetection: Promise<TailscaleInfo> | null = null;
 
 /** Reset the detection cache. Primarily used in tests. */
 export function clearTailscaleCache(): void {
@@ -166,12 +167,19 @@ export async function detectTailscale(options: { force?: boolean } = {}): Promis
     clearTailscaleCache();
   } else if (cachedResult != null && Date.now() < cacheExpiresAt) {
     return cachedResult;
+  } else if (inFlightDetection != null) {
+    return inFlightDetection;
   }
 
-  const result = await detectTailscaleUncached();
-  cachedResult = result;
-  cacheExpiresAt = Date.now() + CACHE_TTL_MS;
-  return result;
+  inFlightDetection = detectTailscaleUncached();
+  try {
+    const result = await inFlightDetection;
+    cachedResult = result;
+    cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+    return result;
+  } finally {
+    inFlightDetection = null;
+  }
 }
 
 async function detectTailscaleUncached(): Promise<TailscaleInfo> {
@@ -210,19 +218,24 @@ async function detectTailscaleUncached(): Promise<TailscaleInfo> {
     }
   }
 
-  // Check Health array for SSH-related warnings/status.
-  // Tailscale SSH server being active isn't always surfaced in `status --json`,
-  // but absence of SSH-blocking health warnings is a reasonable heuristic.
-  const health = getPath(json, "Health");
-  const healthMessages: string[] = Array.isArray(health) ? health.map((h) => String(h)) : [];
-  const sshBlocked = healthMessages.some(
-    (msg) => /ssh/i.test(msg) && /disabled|blocked|not running/i.test(msg)
-  );
-  // We optimistically report sshEnabled=true when Tailscale is online and no
-  // SSH-blocking health message is found. This is optimistic because the code
-  // can only prove SSH is *blocked*, not that it's actively running. Callers
-  // should attempt a connection to confirm.
-  const sshEnabled = !sshBlocked;
+  // Use Self.RunningSSHServer as the primary signal for SSH status.
+  // Available in Tailscale v1.34+ as a boolean field. Falls back to the
+  // health heuristic when the field is absent (older Tailscale versions).
+  const runningSSHServer = getPath(json, "Self.RunningSSHServer");
+  let sshEnabled: boolean;
+  if (typeof runningSSHServer === "boolean") {
+    sshEnabled = runningSSHServer;
+  } else {
+    // Fallback: check Health array for SSH-blocking warnings.
+    // This is optimistic — absence of blocking messages doesn't prove SSH
+    // is running, only that it isn't explicitly disabled.
+    const health = getPath(json, "Health");
+    const healthMessages: string[] = Array.isArray(health) ? health.map((h) => String(h)) : [];
+    const sshBlocked = healthMessages.some(
+      (msg) => /ssh/i.test(msg) && /disabled|blocked|not running/i.test(msg)
+    );
+    sshEnabled = !sshBlocked;
+  }
 
   return {
     available: true,

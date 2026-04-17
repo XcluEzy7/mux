@@ -115,6 +115,16 @@ export async function ensureTailscaleSshConfig(opts: TailscaleSshConfigOptions):
     const before = existingContent.slice(0, startIdx);
     const after = existingContent.slice(endIdx + MUX_TAILSCALE_SSH_BLOCK_END.length);
     nextContent = (before + newBlock + after).trimEnd() + "\n";
+  } else if (startIdx !== -1 || endIdx !== -1) {
+    // Self-heal: exactly one marker found (truncated/corrupted block).
+    // Strip the partial region, then append the canonical block.
+    let cleaned: string;
+    if (startIdx !== -1) {
+      cleaned = existingContent.slice(0, startIdx);
+    } else {
+      cleaned = existingContent.slice(endIdx + MUX_TAILSCALE_SSH_BLOCK_END.length);
+    }
+    nextContent = (cleaned.trimEnd() + "\n" + newBlock).trimEnd() + "\n";
   } else {
     // Append new block
     nextContent =
@@ -144,6 +154,19 @@ export async function removeTailscaleSshConfig(sshConfigPath?: string): Promise<
   const { content: existingContent, mode } = await loadSSHConfigContent(configPath);
   const startIdx = existingContent.indexOf(MUX_TAILSCALE_SSH_BLOCK_START);
   const endIdx = existingContent.indexOf(MUX_TAILSCALE_SSH_BLOCK_END);
+
+  if ((startIdx !== -1) !== (endIdx !== -1)) {
+    // Self-heal: exactly one marker found — strip the partial region
+    let cleaned: string;
+    if (startIdx !== -1) {
+      cleaned = existingContent.slice(0, startIdx);
+    } else {
+      cleaned = existingContent.slice(endIdx + MUX_TAILSCALE_SSH_BLOCK_END.length);
+    }
+    const nextContent = cleaned.trimEnd() + "\n";
+    await writeConfigAtomically(configPath, nextContent, mode);
+    return;
+  }
 
   if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
     return; // Block not found, nothing to remove
