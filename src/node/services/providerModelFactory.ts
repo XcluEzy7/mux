@@ -1767,6 +1767,32 @@ export class ProviderModelFactory {
         return Ok(provider.chat(outboundCopilotModelId));
       }
 
+      // Handle Synthetic.new provider (OpenAI-compatible gateway with custom base URL)
+      if (providerName === "synthetic-new") {
+        const creds = resolveProviderCredentials("synthetic-new" as ProviderName, providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const providerFetch = getProviderFetch(providerConfig);
+        const baseURL =
+          creds.baseUrl ?? providerConfig.baseURL ?? "https://api.synthetic.new/openai/v1";
+        const providerModule = (await PROVIDER_REGISTRY["synthetic-new"]()) as unknown as {
+          createOpenAICompatible: (
+            config: Record<string, unknown>
+          ) => (modelId: string) => LanguageModel;
+        };
+        const provider = providerModule.createOpenAICompatible({
+          name: "synthetic-new",
+          baseURL,
+          apiKey: resolvedApiKey,
+          fetch: providerFetch,
+        });
+        return Ok(provider(modelId));
+      }
       // Generic handler for simple providers (standard API key + factory pattern)
       // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway,
       // github-copilot) are handled explicitly above. New providers using the standard pattern need
