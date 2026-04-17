@@ -1778,8 +1778,10 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
         const providerFetch = getProviderFetch(providerConfig);
-        const baseURL =
-          creds.baseUrl ?? providerConfig.baseURL ?? "https://api.synthetic.new/openai/v1";
+        // baseUrl is the site root (e.g. "https://api.synthetic.new"); append the OpenAI-compatible path
+        const baseURL = creds.baseUrl
+          ? `${creds.baseUrl.replace(/\/$/, "")}/openai/v1`
+          : (providerConfig.baseURL ?? "https://api.synthetic.new/openai/v1");
         const providerModule = (await PROVIDER_REGISTRY["synthetic-new"]()) as unknown as {
           createOpenAICompatible: (
             config: Record<string, unknown>

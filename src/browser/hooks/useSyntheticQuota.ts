@@ -10,10 +10,12 @@ export interface SyntheticQuota {
 
 /** Format remaining requests as "N/M" or "Pay-as-you-go" */
 export function formatSyntheticQuota(quota: SyntheticQuota | null | undefined): string {
-  if (!quota?.limit || !quota?.requests) {
+  // `requests` can legitimately be 0; only fall back when `limit` is absent (pay-as-you-go plans)
+  if (quota?.limit == null) {
     return "Pay-as-you-go";
   }
-  const remaining = quota.limit - quota.requests;
+  const requests = quota.requests ?? 0;
+  const remaining = quota.limit - requests;
   return `${remaining}/${quota.limit}`;
 }
 

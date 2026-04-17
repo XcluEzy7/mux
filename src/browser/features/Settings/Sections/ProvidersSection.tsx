@@ -428,6 +428,9 @@ export function ProvidersSection() {
 
   const codexOauthLoginInProgress =
     codexOauthStatus === "starting" || codexOauthStatus === "waiting";
+  // Separate flag for manual callback submission — codexOauthLoginInProgress is true during
+  // the entire "waiting" flow, so using it to disable the submit button would make it permanently unclickable.
+  const [codexManualCallbackSubmitting, setCodexManualCallbackSubmitting] = useState(false);
   // Experiment flags for remote OAuth features
   const visibleUrlEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_VISIBLE_URL);
   const manualCallbackEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_MANUAL_CALLBACK);
@@ -1102,11 +1105,14 @@ export function ProvidersSection() {
   ]);
   useEffect(() => {
     if (expandedProvider !== "synthetic-new") return;
+    // Only fetch if the provider is actually configured
+    if (!config?.["synthetic-new"]?.isConfigured) return;
     // Only fetch if not already loaded/loading/errored
     if (syntheticQuota || syntheticQuotaLoading || syntheticQuotaError) return;
     void refreshSyntheticQuota();
   }, [
     expandedProvider,
+    config?.["synthetic-new"]?.isConfigured,
     syntheticQuota,
     syntheticQuotaLoading,
     syntheticQuotaError,
@@ -2021,10 +2027,8 @@ export function ProvidersSection() {
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {/* Connect (Browser) button - gated on isRemoteServer or browserFlowOnRemoteEnabled experiment */}
-                            {(visibleUrlEnabled ||
-                              browserFlowOnRemoteEnabled ||
-                              !isRemoteServer) && (
+                            {/* Connect (Browser) button - gated on browserFlowOnRemoteEnabled for remote servers */}
+                            {(!isRemoteServer || browserFlowOnRemoteEnabled) && (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -2159,6 +2163,7 @@ export function ProvidersSection() {
                                     const callbackUrl = formData.get("callbackUrl") as string;
                                     if (!callbackUrl || !api) return;
 
+                                    setCodexManualCallbackSubmitting(true);
                                     void api.codexOauth
                                       .completeDesktopFlowManually({
                                         flowId: codexOauthDesktopFlowId,
@@ -2173,6 +2178,9 @@ export function ProvidersSection() {
                                           setCodexOauthDesktopFlowId(null);
                                           void refresh();
                                         }
+                                      })
+                                      .finally(() => {
+                                        setCodexManualCallbackSubmitting(false);
                                       });
                                   }}
                                   className="flex flex-col gap-2"
@@ -2187,7 +2195,7 @@ export function ProvidersSection() {
                                   <Button
                                     type="submit"
                                     size="sm"
-                                    disabled={codexOauthLoginInProgress}
+                                    disabled={codexManualCallbackSubmitting}
                                   >
                                     Complete Sign-In
                                   </Button>
