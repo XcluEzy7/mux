@@ -41,7 +41,10 @@ export function useSyntheticQuota() {
   const [isLoading, setIsLoading] = useState(false);
 
   const refresh = useCallback(async (): Promise<SyntheticQuota | null> => {
-    if (!api) return null;
+    if (!api) {
+      setData(null);
+      return null;
+    }
     setIsLoading(true);
     setError(null);
     try {
