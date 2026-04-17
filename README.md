@@ -31,6 +31,14 @@ Mux is a desktop & browser application for parallel agentic development. It enab
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
+## Remote Access
+
+Mux supports Tailscale SSH for remote editor connections. When running Mux as a remote server, enable the Tailscale SSH experiment (on by default) to allow editors like Zed to open files via Tailscale-hosted deep links.
+
+See the [Tailscale SSH documentation](docs/config/tailscale-ssh.mdx) for setup instructions.
+
+## Development
+
 Mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
 like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
@@ -96,6 +104,18 @@ macOS and Linux.
 See [the documentation](https://mux.coder.com) for more details.
 
 ## Development
+
+This project uses [just](https://github.com/casey/just) as a command runner. Key recipes:
+
+| Command      | Description                                                |
+| ------------ | ---------------------------------------------------------- |
+| `just dev`   | Start dev server (backend :3000 + frontend :5173 with HMR) |
+| `just build` | Full build (renderer + main + preload + icons + static)    |
+| `just web`   | Build web frontend only (Vite → dist/)                     |
+| `just clean` | Clean all build artifacts                                  |
+| `just list`  | List all available recipes                                 |
+
+> The `justfile` wraps the `Makefile` targets. You can also use `make` directly (`make dev`, `make build`, etc.).
 
 See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 
