@@ -1,0 +1,406 @@
+---
+title: Custom Agents
+description: Create, compose, and share custom agent profiles for specialized workflows
+---
+
+Custom agents let you define specialized behaviors — from read-only reviewers to security auditors to code-search experts — using simple Markdown files with YAML frontmatter.
+
+This guide covers practical patterns beyond the [Quick Start](/agents) reference. For the full schema, see the [Agents reference](/agents).
+
+## Creating Your First Custom Agent
+
+Place a `.md` file in `.mux/agents/` within your project root (or `~/.mux/agents/` for global agents):
+
+```md
+---
+name: Review
+description: Terse reviewer — correctness, risks, test coverage
+base: exec
+tools:
+  # Inherit all exec tools, then remove editing
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+    - propose_plan
+    - ask_user_question
+---
+
+You are a code reviewer.
+
+- Focus on correctness, risks, and test coverage.
+- Prefer short, actionable comments.
+- Never make changes yourself — only report findings.
+```
+
+The `name` in frontmatter must match the filename (e.g., `review.md` → `name: Review`). Agent IDs are lowercase filename stems.
+
+## Inheritance Patterns
+
+The `base` field creates an inheritance chain. The child inherits the base's tool policy and prompt body, then applies its own layers on top.
+
+### Pattern: Read-only variant of Exec
+
+The simplest pattern — inherit all exec capabilities, then remove editing tools:
+
+```md
+---
+name: Explorer
+description: Read-only exploration for investigation
+base: exec
+tools:
+  remove:
+    - file_edit_.*
+    - task
+    - task_apply_git_patch
+    - task_.*
+---
+
+Investigate the repository to answer questions using read-only operations.
+- Prefer `file_read` over `bash cat`
+- Return concise, actionable findings
+- Never modify files
+```
+
+### Pattern: Plan-based analyst
+
+Inherit plan's structured thinking but add different tool restrictions:
+
+```md
+---
+name: Architect
+description: High-level architecture analysis and planning
+base: plan
+tools:
+  add:
+    - bash
+  remove:
+    - file_edit_.*
+---
+
+You are an architecture analyst.
+
+- Focus on system-level concerns: component boundaries, data flow, API contracts
+- Produce plans with clear phases and risk assessments
+- Include diagrams using mermaid when helpful
+```
+
+### Pattern: Deep chain (grandchild inheritance)
+
+Agents can chain more than one level:
+
+```md
+# .mux/agents/reviewer.md
+---
+name: Reviewer
+description: Terse code review
+base: exec
+tools:
+  add:
+    - ".*"
+  remove:
+    - file_edit_.*
+    - propose_plan
+    - ask_user_question
+---
+
+You are a code reviewer. Focus on correctness, risks, and test coverage.
+
+# .mux/agents/security-reviewer.md
+---
+name: Security Reviewer
+description: Security-focused code review
+base: reviewer
+tools:
+  remove:
+    - task_.*
+---
+
+You are a security reviewer. Focus on:
+- Input validation and injection risks
+- Authentication and authorization flaws
+- Cryptographic misuse
+- Dependency vulnerabilities
+```
+
+The inheritance resolution is: `security-reviewer` → `reviewer` → `exec`.
+
+<Note>
+Inheritance depth is limited to 10 levels. Cycles are detected and stopped with a warning.
+</Note>
+
+## Understanding Tool Policy
+
+Tool access is controlled by an explicit **whitelist** system:
+
+1. **Baseline**: All tools are **denied** by default
+2. **`add`**: Regex patterns to **enable** tools
+3. **`remove`**: Regex patterns to **disable** tools (overrides `add`)
+4. **`require`**: Force-enable a single tool (last-wins across inheritance layers)
+
+### Resolution order
+
+When inheritance is involved, policies are applied **base → child**:
+
+```
+exec:    add: [".*"],                    remove: [propose_plan, ask_user_question]
+review:  (inherited from exec),          remove: [file_edit_.*]
+result:  .* → enable, propose_plan → disable, ask_user_question → disable, file_edit_.* → disable
+```
+
+Each layer's `add` enables matching tools, each layer's `remove` disables matching tools, and the final `require` (last-wins across all layers) forces a single tool on.
+
+### Runtime restrictions
+
+Even if your agent definition allows a tool, Mux enforces these runtime restrictions:
+
+| Restriction | Applies When | Effect |
+|---|---|---|
+| `ask_user_question`, `switch_agent` | Always true for sub-agents | Hard deny |
+| `task`, `task_await`, `task_list`, `task_terminate` | Task nesting depth exceeded | Hard deny |
+| `propose_plan` | Plan-like sub-agent | Required (forces plan output) |
+| `agent_report` | Non-plan sub-agent | Required (forces report output) |
+| `switch_agent` | Not explicitly required via `tools.require: ["switch_agent"]` | Disabled by default |
+
+### Pattern: Agent with `switch_agent` enabled
+
+To allow an agent to hand off to another agent mid-conversation:
+
+```md
+---
+name: Triage
+description: Route requests to the right specialist
+base: exec
+tools:
+  add:
+    - ".*"
+  require:
+    - switch_agent
+---
+
+You are a triage agent. Analyze the request and hand off to the appropriate specialist using switch_agent.
+```
+
+## Agent Discovery and Precedence
+
+Mux discovers agents from three locations (non-recursive directory scan):
+
+| Location | Scope | Priority |
+|---|---|---|
+| `<project>/.mux/agents/*.md` | Project | Highest (overrides all) |
+| `~/.mux/agents/*.md` | Global | Medium |
+| Built-in (embedded in Mux) | System | Lowest |
+
+Same-named agents override by scope: a project-level `exec.md` overrides the global `exec.md`, which overrides the built-in `exec`.
+
+<Warning>
+When a project-level `exec.md` uses `base: exec`, Mux resolves the base by **skipping the project scope** to avoid self-reference — it finds the global or built-in `exec` instead.
+</Warning>
+
+## Disabling Built-in Agents
+
+To hide a built-in agent from the selector without removing its functionality for sub-agents:
+
+```md
+# .mux/agents/name_workspace.md
+---
+name: Name Workspace
+description: Generate workspace name and title from user message
+ui:
+  disabled: true
+subagent:
+  runnable: false
+---
+```
+
+Setting `ui.disabled: true` or the top-level `disabled: true` completely removes the agent from UI and routing. The agent definition file must still parse correctly (valid YAML frontmatter + markdown body).
+
+## Agent Definition Reference
+
+### Frontmatter fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | — | **Required.** Display name in UI (1–128 chars) |
+| `description` | string | — | Short description shown in tooltips (max 1024 chars) |
+| `base` | string | — | Agent ID to inherit from (exec, plan, or custom ID) |
+| `disabled` | boolean | false | Completely disable this agent |
+| `ui.hidden` | boolean | false | Hide from agent selector (opt-out) |
+| `ui.selectable` | boolean | true | Legacy — show in selector (opt-in) |
+| `ui.disabled` | boolean | false | Completely hide even from settings |
+| `ui.color` | string | — | CSS color for UI badge (inherited from base if not set) |
+| `ui.routable` | boolean | (same as selectable) | Allow `switch_agent` to target this agent |
+| `ui.requires` | string[] | — | UI requirements for selection (currently: `"desktop"`) |
+| `prompt.append` | boolean | true | `true` = append body to base body; `false` = replace |
+| `subagent.runnable` | boolean | false | Allow spawning via `task({ agentId: ... })` |
+| `subagent.append_prompt` | string | — | Extra instructions appended when running as sub-agent |
+| `subagent.skip_init_hook` | boolean | false | Skip `.mux/init` hook when spawned as sub-agent |
+| `ai.model` | string | — | Default model (full ID or abbreviation like "sonnet") |
+| `ai.thinkingLevel` | string | — | Thinking budget: `low`, `medium`, or `high` |
+| `tools.add` | string[] | — | Regex patterns to enable tools |
+| `tools.remove` | string[] | — | Regex patterns to disable tools (applied after `add`) |
+| `tools.require` | string[] | — | Force-enable specific tools (last entry wins across inheritance) |
+
+### Markdown body
+
+The body becomes the agent's system prompt. When `prompt.append: true` (default), the body is **appended** to the base agent's body. When `prompt.append: false`, the body **replaces** the base entirely — useful for full custom behavior while keeping the tool policy from the base.
+
+### Scoped instructions in agent bodies
+
+Agent bodies support `Model:` and `Tool:` scoped headings, identical to [AGENTS.md scoped instructions](/agents/instruction-files):
+
+```md
+---
+name: Analyst
+base: exec
+---
+
+You are a data analyst.
+
+Model: o3
+When analyzing data, prefer structured output with clear categories.
+
+Model: sonnet
+When summarizing findings, be concise and actionable.
+
+Tool: bash
+Prefer structured data tools (jq, ripgrep) over manual parsing.
+```
+
+Precedence for scoped sections: agent definition body → workspace AGENTS.md → global AGENTS.md. First match wins.
+
+## Example: Specialized Agents
+
+### Security Auditor
+
+```md
+---
+name: Security Audit
+description: Security-focused code review with OWASP awareness
+base: exec
+tools:
+  add:
+    - ".*"
+  remove:
+    - file_edit_.*
+    - propose_plan
+    - ask_user_question
+subagent:
+  runnable: true
+  append_prompt: |
+    You are a security audit sub-agent. Focus exclusively on security concerns.
+    Call agent_report exactly once when done with your findings.
+---
+
+You are a security auditor specializing in application security.
+
+- Check for: injection flaws, broken auth, sensitive data exposure, security misconfiguration
+- Reference OWASP Top 10 categories when applicable
+- Rate each finding as Critical / High / Medium / Low
+- Never modify code — only report findings
+```
+
+### Documentation Writer
+
+```md
+---
+name: Docs Writer
+description: Create and update documentation
+base: exec
+tools:
+  add:
+    - file_read
+    - file_edit_.*
+    - file_write
+    - bash
+  remove:
+    - task
+    - task_.*
+subagent:
+  runnable: true
+  skip_init_hook: true
+  append_prompt: |
+    You are a documentation writer sub-agent.
+    Write clear, concise documentation.
+    Call agent_report exactly once when done.
+---
+
+You are a documentation specialist.
+
+- Write in clear, active voice
+- Include code examples where helpful
+- Use proper markdown formatting with headers, lists, and tables
+- Keep paragraphs short (3–4 sentences max)
+```
+
+### Test Generator
+
+```md
+---
+name: Test Gen
+description: Generate unit and integration tests
+base: exec
+ai:
+  model: sonnet
+  thinkingLevel: medium
+subagent:
+  runnable: true
+  append_prompt: |
+    Generate comprehensive tests. Call agent_report exactly once when done.
+    Include test file paths in your report.
+---
+
+You are a test generation specialist.
+
+- Write tests that are deterministic and don't depend on external services
+- Cover happy paths, edge cases, and error conditions
+- Use the project's existing test patterns and frameworks
+- Group related tests with describe/test blocks
+- Always run tests to verify they pass before reporting
+```
+
+### Custom Compact Agent
+
+Override the built-in compact agent with custom summarization behavior:
+
+```md
+# ~/.mux/agents/compact.md
+---
+name: Compact
+description: History compaction with project-aware context preservation
+---
+
+You are running a compaction/summarization pass. Your task is to write a concise summary of the conversation so far.
+
+IMPORTANT:
+- Preserve any references to project-specific conventions, file paths, and architectural decisions
+- Keep TODO items and action items verbatim
+- Summarize code changes as diffs, not full listings
+- Preserve the current task context and what was most recently being worked on
+```
+
+## Troubleshooting
+
+### My agent doesn't appear in the selector
+
+Check:
+1. File is in `.mux/agents/` (project) or `~/.mux/agents/` (global)
+2. Filename matches the `name` field (case-insensitive)
+3. `ui.hidden` is not `true` and `ui.disabled` is not `true`
+4. `disabled` is not `true` (top-level field)
+5. File has valid YAML frontmatter between `---` delimiters
+6. File size is under 1MB
+
+### Inheritance isn't working as expected
+
+- Check that the `base` agent ID matches an existing agent ID (built-in or custom)
+- Same-name inheritance (e.g., project `exec.md` with `base: exec`) skips the current scope — it finds global/built-in `exec`
+- Tool policy is resolved base → child; `remove` at any level overrides `add` from lower levels
+- `require` uses last-wins semantics across all inheritance layers
+
+### Sub-agent can't use a tool I declared
+
+Sub-agents have hard runtime restrictions that override agent definitions:
+- `ask_user_question` and `switch_agent` are always blocked
+- `task_*` tools are blocked when nesting depth exceeds the limit
+- Plan-like sub-agents must use `propose_plan`; non-plan sub-agents must use `agent_report`

@@ -1,0 +1,267 @@
+---
+title: Multi-Agent Orchestration
+description: Coordinate multiple agents using the task tool, best-of-N, variants, and switch_agent
+---
+
+Mux provides several mechanisms for multi-agent orchestration: the `task` tool for spawning sub-agents in workspaces, `best-of-N` for parallel evaluation, `variants` for parallel lanes, and `switch_agent` for mid-conversation handoffs.
+
+## Spawning Sub-Agents with the Task Tool
+
+The `task` tool creates a child workspace and runs an agent in it:
+
+```ts
+task({
+  agentId: "explore",       // Which agent profile to use
+  title: "Find auth files", // Workspace title
+  prompt: "Locate all authentication middleware files and report their paths"
+})
+```
+
+### Which agents can be spawned?
+
+Only agents with `subagent.runnable: true` can be used with the `task` tool. Built-in runnable agents:
+
+| Agent | Purpose | Key Restrictions |
+|---|---|---|
+| `exec` | Full implementation | All tools minus `propose_plan`, `ask_user_question` |
+| `plan` | Structured planning | File edits restricted to plan file |
+| `explore` | Read-only investigation | No file edits, no git modifications |
+| `orchestrator` | Coordinate sub-agents | No direct file edits (applies patches via `task_apply_git_patch`) |
+| `desktop` | GUI automation | Screenshot-driven interaction only |
+
+### Custom sub-agents
+
+Make any custom agent spawnable by adding `subagent.runnable: true`:
+
+```md
+---
+name: Security Review
+description: Security-focused code review
+base: exec
+subagent:
+  runnable: true
+  append_prompt: |
+    You are a security audit sub-agent. Focus on security concerns only.
+    Call agent_report exactly once when complete with your findings.
+tools:
+  remove:
+    - file_edit_.*
+---
+```
+
+### Sub-agent completion
+
+Sub-agents must call exactly one completion tool:
+
+- **Plan-like sub-agents** (inherit from `plan`): must call `propose_plan`
+- **Non-plan sub-agents** (all others): must call `agent_report`
+
+If a sub-agent finishes without calling the required tool, the parent injects a follow-up prompting it to do so.
+
+### Task depth and nesting
+
+Sub-agents have a configurable nesting depth limit (default: configurable in Settings → Agents → Task Settings). When the depth limit is reached, `task_*` tools are automatically disabled for that sub-agent — it cannot spawn further children.
+
+## Orchestrator Pattern
+
+The built-in `orchestrator` agent coordinates sub-agent tasks and integrates their patches:
+
+```
+User → Orchestrator
+          ├── Explore task 1 (investigate files)
+          ├── Explore task 2 (search patterns)
+          └── Wait for reports → Apply patches → Verify
+```
+
+Key orchestrator rules:
+- **No direct file edits** — orchestrator delegates via `task` and integrates via `task_apply_git_patch`
+- **No PR creation** — the parent workspace handles all PR management
+- **Must call `agent_report`** exactly once with: what changed, what was verified, and any risks
+
+Example orchestrator prompt:
+
+```ts
+task({
+  agentId: "orchestrator",
+  title: "Implement auth refresh flow",
+  prompt: `Implement refresh token rotation for the auth middleware.
+  
+  Plan:
+  1. Add refresh token generation to auth service
+  2. Add /auth/refresh endpoint
+  3. Add client-side refresh interceptor
+  4. Add tests for all three layers`
+})
+```
+
+## Best of N
+
+The `task` tool supports `n` for parallel independent attempts at the same problem:
+
+```ts
+task({
+  prompt: "Find the root cause of the memory leak in the streaming handler",
+  n: 3,  // Run 3 independent attempts
+})
+```
+
+Each child workspace gets the same prompt. Mux waits for all children to complete, then presents the results together.
+
+<Note>
+Start with `best of 3` or `best of 5`. Larger batches cost more tokens and take longer, but pay off on high-stakes or open-ended problems.
+</Note>
+
+### How Best-of-N works internally
+
+1. Mux creates `n` child workspaces (git worktrees from the same parent)
+2. Each child runs the prompt independently
+3. As children complete, their `agent_report` artifacts are collected
+4. Results are presented to the parent for evaluation
+
+### When to use Best-of-N
+
+- Root cause analysis where multiple hypotheses should be explored
+- Complex bug fixes where the approach matters
+- Code review where you want multiple independent assessments
+- Any task where there's genuine ambiguity about the best approach
+
+## Variants
+
+When the same prompt template applies to different scopes, use the `variants` parameter instead of `n`:
+
+```ts
+task({
+  prompt: "Review the changes in ${variant}",
+  variants: [
+    { label: "frontend", prompt: "Review the changes in frontend" },
+    { label: "backend", prompt: "Review the changes in backend" },
+    { label: "tests", prompt: "Review the changes in tests" },
+  ]
+})
+```
+
+Each variant gets its own workspace with the same base template but a different labeled focus. This is more efficient than spawning entirely separate tasks.
+
+### Best-of-N vs Variants
+
+| Feature | Best-of-N | Variants |
+|---|---|---|
+| Same prompt? | Yes, identical | Same template, different focus |
+| Purpose | Multiple attempts at one answer | Parallel lanes for different scopes |
+| Result | Pick the best | Collect all results |
+| Example | "Find the root cause" × 3 | "Review frontend" / "Review backend" |
+
+## Switching Agents Mid-Conversation
+
+The `switch_agent` tool allows changing the active agent within a workspace without creating a new one:
+
+```ts
+switch_agent({
+  agentId: "plan"  // Switch from exec to plan mode
+})
+```
+
+### Which agents can be switched to?
+
+By default, agents that are **visible** (not hidden) and **not disabled** can be targeted by `switch_agent`. Agents marked as `ui.routable: true` can also be switched to even if hidden.
+
+To explicitly enable cross-agent switching for a custom hidden agent:
+
+```md
+---
+name: Security Specialist
+description: Deep security analysis
+base: exec
+ui:
+  hidden: true
+  routable: true
+---
+```
+
+<Warning>
+`switch_agent` is disabled by default for sub-agents. Only the main workspace (top-level conversation) can use it unless explicitly enabled via `tools.require: ["switch_agent"]`.
+</Warning>
+
+## Practical Patterns
+
+### Pattern: Plan → Exec handoff
+
+The most common orchestrated workflow:
+
+1. Start in **Plan mode** — the agent researches and proposes a plan
+2. User reviews and edits the plan
+3. Switch to **Exec mode** — the agent implements the plan
+4. (Optional) Use **Explore sub-agents** within Exec for targeted investigation
+
+### Pattern: Explore → Plan → Orchestrator → Exec pipeline
+
+For complex multi-file changes:
+
+```
+Explore(investigate codebase)
+  ↓ findings
+Plan(create implementation plan)
+  ↓ approved plan  
+Orchestrator(spawn exec tasks for each step)
+  ├── Exec(task A: implement auth refresh)
+  ├── Exec(task B: add refresh endpoint)
+  └── Exec(task C: add tests)
+  ↓ patch integration + verification
+```
+
+### Pattern: Best-of-3 for critical decisions
+
+```
+task({
+  prompt: "Propose a solution for the race condition in the streaming handler",
+  n: 3,
+  agentId: "plan"
+})
+```
+
+Three plan-mode agents independently analyze and propose solutions. You pick the best approach, then switch to Exec to implement.
+
+### Pattern: Custom sub-agent for security review
+
+```ts
+// Spawn a security review sub-agent
+task({
+  agentId: "security-review",
+  title: "Security audit of auth module",
+  prompt: "Review src/auth/ for: injection flaws, broken auth, sensitive data exposure"
+})
+```
+
+### Pattern: Skip init hook for fast sub-agents
+
+Sub-agents run `.mux/init` by default (which can install dependencies, set up environment, etc.). Skip this for fast, lightweight tasks:
+
+```md
+---
+name: Quick Find
+description: Fast read-only search
+base: explore
+subagent:
+  runnable: true
+  skip_init_hook: true
+---
+```
+
+## Sub-Agent Reporting
+
+When sub-agents complete, they send an `agent_report` back to the parent workspace. The parent sees this as a `<mux_subagent_report>` block in the conversation, which is treated as trusted tool output.
+
+Report best practices:
+- Include **what changed** (file paths and key details)
+- Include **what was verified** (tests, lint, typecheck commands run)
+- Include **follow-ups/risks** (anything the parent should know about)
+- Call `agent_report` exactly once — not calling it wastes tokens as the parent will follow up
+
+## Related Docs
+
+- [Agents reference](/agents) — Full agent definition schema
+- [Custom Agents](/agents/custom-agents) — Creating custom agent profiles
+- [Agent Skills](/agents/agent-skills) — Skill system for augmenting agent capabilities
+- [Best of N](/agents/best-of-n) — Detailed best-of-N and variants guide
+- [System Prompt](/agents/system-prompt) — How the system prompt is assembled
+- [Instruction Files](/agents/instruction-files) — AGENTS.md scoped instructions
