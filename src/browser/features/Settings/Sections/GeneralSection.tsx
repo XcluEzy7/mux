@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useTheme, THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
 import {
   Select,
@@ -9,8 +10,14 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
+import { Button } from "@/browser/components/Button/Button";
+import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { generateTailscaleSshSnippet } from "@/browser/utils/tailscaleSshSnippet";
+import type { TailscaleSshConfig, TailscaleInfo } from "@/common/orpc/schemas/api";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   EDITOR_CONFIG_KEY,
@@ -191,6 +198,11 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+  // Tailscale SSH state (browser mode + experiment gate)
+  const tailscaleSshExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
+  const [tailscaleSshConfig, setTailscaleSshConfig] = useState<TailscaleSshConfig | null>(null);
+  const [tailscaleInfo, setTailscaleInfo] = useState<TailscaleInfo | null>(null);
+  const [detecting, setDetecting] = useState(false);
   const [defaultProjectDir, setDefaultProjectDir] = useState("");
   const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
   // Track whether the initial load succeeded to prevent saving empty string
@@ -379,6 +391,72 @@ export function GeneralSection() {
       });
     }
   }, [api]);
+
+  // Load Tailscale SSH config from server on mount (browser mode + experiment only)
+  useEffect(() => {
+    if (isBrowserMode && tailscaleSshExperimentEnabled && api) {
+      void api.server.getTailscaleSsh().then((config) => {
+        setTailscaleSshConfig(config);
+      });
+    }
+  }, [api, tailscaleSshExperimentEnabled]);
+
+  const handleTailscaleSshToggle = useCallback(
+    (enabled: boolean) => {
+      // Build a minimal config when enabling for the first time
+      const next: TailscaleSshConfig = {
+        ...(tailscaleSshConfig ?? { sshHost: undefined, proxyCommand: false }),
+        enabled,
+      };
+      setTailscaleSshConfig(next);
+      void api?.server.setTailscaleSsh({ config: next });
+    },
+    [api, tailscaleSshConfig]
+  );
+
+  const handleTailscaleSshHostChange = useCallback(
+    (value: string) => {
+      if (!tailscaleSshConfig) {
+        return;
+      }
+      const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: value || undefined };
+      setTailscaleSshConfig(next);
+      void api?.server.setTailscaleSsh({ config: next });
+    },
+    [api, tailscaleSshConfig]
+  );
+
+  const handleTailscaleProxyCommandChange = useCallback(
+    (proxyCommand: boolean) => {
+      if (!tailscaleSshConfig) {
+        return;
+      }
+      const next: TailscaleSshConfig = { ...tailscaleSshConfig, proxyCommand };
+      setTailscaleSshConfig(next);
+      void api?.server.setTailscaleSsh({ config: next });
+    },
+    [api, tailscaleSshConfig]
+  );
+
+  const handleDetectTailscale = useCallback(async () => {
+    if (!api) {
+      return;
+    }
+    setDetecting(true);
+    try {
+      const info = await api.server.detectTailscale();
+      setTailscaleInfo(info);
+      // Auto-fill sshHost from detected hostname/IP if not already set
+      if (tailscaleSshConfig && !tailscaleSshConfig.sshHost && (info.hostname ?? info.ip)) {
+        const autoHost = info.hostname ?? info.ip ?? "";
+        const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: autoHost };
+        setTailscaleSshConfig(next);
+        void api.server.setTailscaleSsh({ config: next });
+      }
+    } finally {
+      setDetecting(false);
+    }
+  }, [api, tailscaleSshConfig]);
 
   useEffect(() => {
     if (!api) {
@@ -679,6 +757,119 @@ export function GeneralSection() {
             placeholder={window.location.hostname}
             className="border-border-medium bg-background-secondary h-9 w-40"
           />
+        </div>
+      )}
+
+      {isBrowserMode && tailscaleSshExperimentEnabled && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-foreground text-sm">Tailscale SSH</div>
+              <div className="text-muted text-xs">
+                Use Tailscale hostname for &apos;Open in Editor&apos; deep links
+              </div>
+            </div>
+            <Switch
+              checked={tailscaleSshConfig?.enabled ?? false}
+              onCheckedChange={handleTailscaleSshToggle}
+              aria-label="Enable Tailscale SSH"
+            />
+          </div>
+
+          {tailscaleSshConfig?.enabled && (
+            <div className="border-border-light ml-2 space-y-3 border-l pl-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-foreground text-sm">Tailscale Host</div>
+                  <div className="text-muted text-xs">
+                    Tailscale hostname or IP for SSH connections
+                  </div>
+                </div>
+                <Input
+                  value={tailscaleSshConfig.sshHost ?? ""}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    handleTailscaleSshHostChange(e.target.value)
+                  }
+                  placeholder="hostname.tailnet.ts.net"
+                  className="border-border-medium bg-background-secondary h-9 w-48"
+                />
+              </div>
+
+              <div>
+                <div className="text-foreground mb-2 text-sm">Connection Mode</div>
+                <div className="space-y-1">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="tailscale-connection-mode"
+                      checked={!tailscaleSshConfig.proxyCommand}
+                      onChange={() => handleTailscaleProxyCommandChange(false)}
+                      className="accent-primary"
+                    />
+                    <span className="text-foreground text-sm">Tailscale SSH server</span>
+                    <span className="text-muted text-xs">(requires Tailscale SSH enabled)</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="tailscale-connection-mode"
+                      checked={tailscaleSshConfig.proxyCommand}
+                      onChange={() => handleTailscaleProxyCommandChange(true)}
+                      className="accent-primary"
+                    />
+                    <span className="text-foreground text-sm">ProxyCommand</span>
+                    <span className="text-muted text-xs">
+                      (tailscale nc, works without Tailscale SSH)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => {
+                    void handleDetectTailscale();
+                  }}
+                  disabled={detecting}
+                  size="sm"
+                  variant="outline"
+                >
+                  {detecting ? "Detecting..." : "Detect Tailscale"}
+                </Button>
+                {tailscaleInfo != null && (
+                  <span className="text-muted text-xs">
+                    {tailscaleInfo.available
+                      ? `${tailscaleInfo.hostname ?? tailscaleInfo.ip ?? "connected"}${tailscaleInfo.tailnet ? ` (${tailscaleInfo.tailnet})` : ""}`
+                      : "Tailscale not detected"}
+                  </span>
+                )}
+              </div>
+
+              {tailscaleInfo != null &&
+                tailscaleInfo.available &&
+                !tailscaleInfo.sshEnabled &&
+                !tailscaleSshConfig.proxyCommand && (
+                  <div className="bg-warning/10 border-warning/30 rounded-md border p-3">
+                    <div className="text-warning mb-2 flex items-center gap-1.5 text-xs font-medium">
+                      <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                      Tailscale SSH is not enabled on this machine
+                    </div>
+                    <div className="text-muted mb-2 text-xs">
+                      Use ProxyCommand mode, or add this to your local{" "}
+                      <code className="bg-background-secondary rounded px-1">~/.ssh/config</code>:
+                    </div>
+                    <div className="bg-background-secondary relative rounded p-2">
+                      <pre className="text-foreground overflow-x-auto text-xs">
+                        {generateTailscaleSshSnippet(tailscaleInfo)}
+                      </pre>
+                      <div className="absolute top-1.5 right-1.5">
+                        <CopyButton text={generateTailscaleSshSnippet(tailscaleInfo)} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
         </div>
       )}
 
