@@ -1849,6 +1849,12 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.codexOauthService.disconnect();
         }),
+      completeDesktopFlowManually: t
+        .input(schemas.codexOauth.completeDesktopFlowManually.input)
+        .output(schemas.codexOauth.completeDesktopFlowManually.output)
+        .handler(async ({ context, input }) => {
+          return context.codexOauthService.completeDesktopFlowManually(input);
+        }),
     },
     general: {
       listDirectory: t

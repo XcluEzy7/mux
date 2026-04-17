@@ -67,6 +67,9 @@ import {
   TooltipTrigger,
 } from "@/browser/components/Tooltip/Tooltip";
 import { getErrorMessage } from "@/common/utils/errors";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { copyToClipboard } from "@/browser/utils/clipboard";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -425,6 +428,10 @@ export function ProvidersSection() {
 
   const codexOauthLoginInProgress =
     codexOauthStatus === "starting" || codexOauthStatus === "waiting";
+  // Experiment flags for remote OAuth features
+  const visibleUrlEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_VISIBLE_URL);
+  const manualCallbackEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_MANUAL_CALLBACK);
+  const browserFlowOnRemoteEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_BROWSER_FLOW);
 
   const startCodexOauthBrowserConnect = async () => {
     const attempt = ++codexOauthAttemptRef.current;
@@ -508,7 +515,15 @@ export function ProvidersSection() {
 
       if (!startResult.success) {
         setCodexOauthStatus("error");
-        setCodexOauthError(startResult.error);
+        // Check for port-in-use error and suggest manual callback as fallback
+        const errorMessage = getErrorMessage(startResult.error);
+        if (errorMessage.includes("EADDRINUSE") || errorMessage.includes("port")) {
+          setCodexOauthError(
+            `Port 1455 is in use. Try the "Paste Callback URL" option below, or close other apps using this port.`
+          );
+        } else {
+          setCodexOauthError(errorMessage);
+        }
         return;
       }
 
@@ -2006,7 +2021,10 @@ export function ProvidersSection() {
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {!isRemoteServer && (
+                            {/* Connect (Browser) button - gated on isRemoteServer or browserFlowOnRemoteEnabled experiment */}
+                            {(visibleUrlEnabled ||
+                              browserFlowOnRemoteEnabled ||
+                              !isRemoteServer) && (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -2028,20 +2046,36 @@ export function ProvidersSection() {
                               Connect (Device)
                             </Button>
 
+                            {/* Visible URL panel - shown when experiment is enabled or on remote server */}
                             {codexOauthStatus === "waiting" &&
                               !codexOauthDeviceFlow &&
-                              codexOauthAuthorizeUrl && (
-                                <Button
-                                  size="sm"
-                                  aria-label="Copy and open OpenAI authorization page"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
-                                    window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
-                                  }}
-                                  className="h-8 px-3 text-xs"
-                                >
-                                  Copy & Open OpenAI
-                                </Button>
+                              codexOauthAuthorizeUrl &&
+                              (visibleUrlEnabled || isRemoteServer) && (
+                                <div className="flex flex-col gap-2">
+                                  <label className="text-muted text-xs">
+                                    Open this URL in your browser:
+                                  </label>
+                                  <code
+                                    className="bg-background-tertiary text-foreground cursor-text rounded border px-3 py-2 text-xs select-text"
+                                    onClick={() => {
+                                      void copyToClipboard(codexOauthAuthorizeUrl);
+                                    }}
+                                    title="Click to copy"
+                                  >
+                                    {codexOauthAuthorizeUrl}
+                                  </code>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => {
+                                      void copyToClipboard(codexOauthAuthorizeUrl);
+                                      window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                                    }}
+                                    className="h-8 px-3 text-xs"
+                                  >
+                                    Copy & Open OpenAI
+                                  </Button>
+                                </div>
                               )}
 
                             {codexOauthLoginInProgress && (
@@ -2077,9 +2111,7 @@ export function ProvidersSection() {
                                   size="sm"
                                   aria-label="Copy and open OpenAI verification page"
                                   onClick={() => {
-                                    void navigator.clipboard.writeText(
-                                      codexOauthDeviceFlow.userCode
-                                    );
+                                    void copyToClipboard(codexOauthDeviceFlow.userCode);
                                     window.open(
                                       codexOauthDeviceFlow.verifyUrl,
                                       "_blank",
@@ -2107,6 +2139,61 @@ export function ProvidersSection() {
 
                           {codexOauthStatus === "error" && codexOauthError && (
                             <p className="text-destructive text-xs">{codexOauthError}</p>
+                          )}
+                          {/* Manual callback paste section - gated on manualCallbackEnabled experiment */}
+                          {manualCallbackEnabled && codexOauthDesktopFlowId && (
+                            <details className="border-border-light space-y-2 rounded border p-3">
+                              <summary className="text-foreground cursor-pointer text-xs font-medium">
+                                Paste Callback URL (Advanced)
+                              </summary>
+                              <div className="space-y-2">
+                                <p className="text-muted text-xs">
+                                  After authorizing in your browser, paste the callback URL below to
+                                  complete sign-in.
+                                </p>
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    const form = e.currentTarget;
+                                    const formData = new FormData(form);
+                                    const callbackUrl = formData.get("callbackUrl") as string;
+                                    if (!callbackUrl || !api) return;
+
+                                    void api.codexOauth
+                                      .completeDesktopFlowManually({
+                                        flowId: codexOauthDesktopFlowId,
+                                        callbackUrl,
+                                      })
+                                      .then((result) => {
+                                        if (!result.success) {
+                                          setCodexOauthStatus("error");
+                                          setCodexOauthError(result.error);
+                                        } else {
+                                          setCodexOauthStatus("idle");
+                                          setCodexOauthDesktopFlowId(null);
+                                          void refresh();
+                                        }
+                                      });
+                                  }}
+                                  className="flex flex-col gap-2"
+                                >
+                                  <input
+                                    type="text"
+                                    name="callbackUrl"
+                                    placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                                    className="bg-background text-foreground border-border-light rounded border px-3 py-2 font-mono text-xs"
+                                    required
+                                  />
+                                  <Button
+                                    type="submit"
+                                    size="sm"
+                                    disabled={codexOauthLoginInProgress}
+                                  >
+                                    Complete Sign-In
+                                  </Button>
+                                </form>
+                              </div>
+                            </details>
                           )}
 
                           <div className="border-border-light space-y-2 border-t pt-3">

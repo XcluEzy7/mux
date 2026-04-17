@@ -150,6 +150,7 @@ export class CodexOauthService {
       timeoutHandle: setTimeout(() => {
         void this.desktopFlows.finish(flowId, Err("Timed out waiting for OAuth callback"));
       }, DEFAULT_DESKTOP_TIMEOUT_MS),
+      codeVerifier,
     });
 
     const authorizeUrl = buildCodexAuthorizeUrl({
@@ -179,8 +180,8 @@ export class CodexOauthService {
         flowId,
         redirectUri,
         codeVerifier,
-        code: callbackResult.data.code,
-        error: null,
+        code: callbackResult.data.code ?? undefined,
+        error: undefined,
         errorDescription: undefined,
       });
 
@@ -210,6 +211,63 @@ export class CodexOauthService {
       log.debug(`[Codex OAuth] Desktop flow cancelled (flowId=${flowId})`);
     }
     await this.desktopFlows.cancel(flowId);
+  }
+  async completeDesktopFlowManually(input: {
+    flowId: string;
+    callbackUrl: string;
+  }): Promise<Result<void, string>> {
+    const flow = this.desktopFlows.get(input.flowId);
+    if (!flow) {
+      return Err("OAuth flow not found");
+    }
+
+    // Parse callback URL for OAuth params
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(input.callbackUrl);
+    } catch {
+      return Err("Invalid callback URL format");
+    }
+
+    // Validate hostname (localhost or 127.0.0.1 only)
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return Err("Callback URL must use localhost or 127.0.0.1");
+    }
+
+    // Validate pathname (/auth/callback)
+    if (parsedUrl.pathname !== "/auth/callback") {
+      return Err("Callback URL must have pathname /auth/callback");
+    }
+
+    // Extract OAuth params from query string
+    const code = parsedUrl.searchParams.get("code");
+    const state = parsedUrl.searchParams.get("state");
+    const error = parsedUrl.searchParams.get("error");
+    const errorDescription = parsedUrl.searchParams.get("error_description");
+
+    // Validate state matches flowId
+    if (!state || state !== input.flowId) {
+      return Err("OAuth state mismatch. Callback state does not match flow ID");
+    }
+
+    // Retrieve stored codeVerifier
+    const codeVerifier = flow.codeVerifier;
+    if (!codeVerifier) {
+      return Err("Code verifier not found for this flow");
+    }
+
+    // Exchange code for tokens
+    const exchangeResult = await this.handleDesktopCallbackAndExchange({
+      flowId: input.flowId,
+      redirectUri: CODEX_OAUTH_BROWSER_REDIRECT_URI,
+      codeVerifier,
+      code: code ?? undefined,
+      error: error ?? undefined,
+      errorDescription: errorDescription ?? undefined,
+    });
+
+    return exchangeResult;
   }
 
   async startDeviceFlow(): Promise<
@@ -385,8 +443,8 @@ export class CodexOauthService {
     flowId: string;
     redirectUri: string;
     codeVerifier: string;
-    code: string | null;
-    error: string | null;
+    code?: string;
+    error?: string;
     errorDescription?: string;
   }): Promise<Result<void, string>> {
     if (input.error) {

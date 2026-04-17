@@ -27,6 +27,8 @@ export interface OAuthFlowEntry {
   };
   /** Handle for the server-side timeout (set at registration time by the caller). */
   timeoutHandle: ReturnType<typeof setTimeout> | null;
+  /** PKCE code verifier for manual callback flow (optional, used when user pastes callback URL). */
+  codeVerifier?: string;
 }
 
 interface CompletedOAuthFlowEntry {

@@ -405,6 +405,10 @@ export const codexOauth = {
     input: z.void(),
     output: ResultSchema(z.void(), z.string()),
   },
+  completeDesktopFlowManually: {
+    input: z.object({ flowId: z.string(), callbackUrl: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
 };
 // Mux Gateway
 export const muxGateway = {
