@@ -462,6 +462,23 @@ export const router = (authToken?: string) => {
             ...config,
             tailscaleSsh: input.config ?? undefined,
           }));
+
+          // In Electron mode, keep ~/.ssh/config in sync with Mux config.
+          // In server mode, users copy the snippet from Settings — no filesystem access.
+          const isElectron = "electron" in process.versions;
+          if (isElectron) {
+            const {
+              ensureTailscaleSshConfig,
+              removeTailscaleSshConfig,
+            } = await import("@/node/runtime/tailscaleSshConfigWriter");
+            if (input.config?.enabled && input.config.sshHost) {
+              await ensureTailscaleSshConfig({
+                sshHost: input.config.sshHost,
+              });
+            } else {
+              await removeTailscaleSshConfig();
+            }
+          }
         }),
       detectTailscale: t
         .input(schemas.server.detectTailscale.input)
