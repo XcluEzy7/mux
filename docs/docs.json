@@ -129,6 +129,7 @@
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
+              "reference/future-build-improvements",
               "AGENTS"
             ]
           }

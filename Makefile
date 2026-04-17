@@ -223,6 +223,8 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
+	@# Keep the built CLI directly executable because `just cli` links this file onto PATH.
+	@chmod +x dist/cli/index.js
 	@# Signal nodemon only after alias rewriting is complete so it never boots from partial dist output.
 	@mkdir -p dist
 	@touch dist/.main-build-complete

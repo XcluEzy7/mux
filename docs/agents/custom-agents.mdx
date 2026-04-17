@@ -57,6 +57,7 @@ tools:
 ---
 
 Investigate the repository to answer questions using read-only operations.
+
 - Prefer `file_read` over `bash cat`
 - Return concise, actionable findings
 - Never modify files
@@ -91,32 +92,34 @@ Agents can chain more than one level:
 
 ```md
 # .mux/agents/reviewer.md
+
 ---
+
 name: Reviewer
 description: Terse code review
 base: exec
 tools:
-  add:
-    - ".*"
-  remove:
-    - file_edit_.*
-    - propose_plan
-    - ask_user_question
+add: - "._"
+remove: - file*edit*._ - propose_plan - ask_user_question
+
 ---
 
 You are a code reviewer. Focus on correctness, risks, and test coverage.
 
 # .mux/agents/security-reviewer.md
+
 ---
+
 name: Security Reviewer
 description: Security-focused code review
 base: reviewer
 tools:
-  remove:
-    - task_.*
+remove: - task\_.\*
+
 ---
 
 You are a security reviewer. Focus on:
+
 - Input validation and injection risks
 - Authentication and authorization flaws
 - Cryptographic misuse
@@ -126,7 +129,7 @@ You are a security reviewer. Focus on:
 The inheritance resolution is: `security-reviewer` → `reviewer` → `exec`.
 
 <Note>
-Inheritance depth is limited to 10 levels. Cycles are detected and stopped with a warning.
+  Inheritance depth is limited to 10 levels. Cycles are detected and stopped with a warning.
 </Note>
 
 ## Understanding Tool Policy
@@ -154,13 +157,13 @@ Each layer's `add` enables matching tools, each layer's `remove` disables matchi
 
 Even if your agent definition allows a tool, Mux enforces these runtime restrictions:
 
-| Restriction | Applies When | Effect |
-|---|---|---|
-| `ask_user_question`, `switch_agent` | Always true for sub-agents | Hard deny |
-| `task`, `task_await`, `task_list`, `task_terminate` | Task nesting depth exceeded | Hard deny |
-| `propose_plan` | Plan-like sub-agent | Required (forces plan output) |
-| `agent_report` | Non-plan sub-agent | Required (forces report output) |
-| `switch_agent` | Not explicitly required via `tools.require: ["switch_agent"]` | Disabled by default |
+| Restriction                                         | Applies When                                                  | Effect                          |
+| --------------------------------------------------- | ------------------------------------------------------------- | ------------------------------- |
+| `ask_user_question`, `switch_agent`                 | Always true for sub-agents                                    | Hard deny                       |
+| `task`, `task_await`, `task_list`, `task_terminate` | Task nesting depth exceeded                                   | Hard deny                       |
+| `propose_plan`                                      | Plan-like sub-agent                                           | Required (forces plan output)   |
+| `agent_report`                                      | Non-plan sub-agent                                            | Required (forces report output) |
+| `switch_agent`                                      | Not explicitly required via `tools.require: ["switch_agent"]` | Disabled by default             |
 
 ### Pattern: Agent with `switch_agent` enabled
 
@@ -185,16 +188,17 @@ You are a triage agent. Analyze the request and hand off to the appropriate spec
 
 Mux discovers agents from three locations (non-recursive directory scan):
 
-| Location | Scope | Priority |
-|---|---|---|
+| Location                     | Scope   | Priority                |
+| ---------------------------- | ------- | ----------------------- |
 | `<project>/.mux/agents/*.md` | Project | Highest (overrides all) |
-| `~/.mux/agents/*.md` | Global | Medium |
-| Built-in (embedded in Mux) | System | Lowest |
+| `~/.mux/agents/*.md`         | Global  | Medium                  |
+| Built-in (embedded in Mux)   | System  | Lowest                  |
 
 Same-named agents override by scope: a project-level `exec.md` overrides the global `exec.md`, which overrides the built-in `exec`.
 
 <Warning>
-When a project-level `exec.md` uses `base: exec`, Mux resolves the base by **skipping the project scope** to avoid self-reference — it finds the global or built-in `exec` instead.
+  When a project-level `exec.md` uses `base: exec`, Mux resolves the base by **skipping the project
+  scope** to avoid self-reference — it finds the global or built-in `exec` instead.
 </Warning>
 
 ## Disabling Built-in Agents
@@ -203,13 +207,16 @@ To hide a built-in agent from the selector without removing its functionality fo
 
 ```md
 # .mux/agents/name_workspace.md
+
 ---
+
 name: Name Workspace
 description: Generate workspace name and title from user message
 ui:
-  disabled: true
+disabled: true
 subagent:
-  runnable: false
+runnable: false
+
 ---
 ```
 
@@ -219,27 +226,27 @@ Setting `ui.disabled: true` or the top-level `disabled: true` completely removes
 
 ### Frontmatter fields
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `name` | string | — | **Required.** Display name in UI (1–128 chars) |
-| `description` | string | — | Short description shown in tooltips (max 1024 chars) |
-| `base` | string | — | Agent ID to inherit from (exec, plan, or custom ID) |
-| `disabled` | boolean | false | Completely disable this agent |
-| `ui.hidden` | boolean | false | Hide from agent selector (opt-out) |
-| `ui.selectable` | boolean | true | Legacy — show in selector (opt-in) |
-| `ui.disabled` | boolean | false | Completely hide even from settings |
-| `ui.color` | string | — | CSS color for UI badge (inherited from base if not set) |
-| `ui.routable` | boolean | (same as selectable) | Allow `switch_agent` to target this agent |
-| `ui.requires` | string[] | — | UI requirements for selection (currently: `"desktop"`) |
-| `prompt.append` | boolean | true | `true` = append body to base body; `false` = replace |
-| `subagent.runnable` | boolean | false | Allow spawning via `task({ agentId: ... })` |
-| `subagent.append_prompt` | string | — | Extra instructions appended when running as sub-agent |
-| `subagent.skip_init_hook` | boolean | false | Skip `.mux/init` hook when spawned as sub-agent |
-| `ai.model` | string | — | Default model (full ID or abbreviation like "sonnet") |
-| `ai.thinkingLevel` | string | — | Thinking budget: `low`, `medium`, or `high` |
-| `tools.add` | string[] | — | Regex patterns to enable tools |
-| `tools.remove` | string[] | — | Regex patterns to disable tools (applied after `add`) |
-| `tools.require` | string[] | — | Force-enable specific tools (last entry wins across inheritance) |
+| Field                     | Type     | Default              | Description                                                      |
+| ------------------------- | -------- | -------------------- | ---------------------------------------------------------------- |
+| `name`                    | string   | —                    | **Required.** Display name in UI (1–128 chars)                   |
+| `description`             | string   | —                    | Short description shown in tooltips (max 1024 chars)             |
+| `base`                    | string   | —                    | Agent ID to inherit from (exec, plan, or custom ID)              |
+| `disabled`                | boolean  | false                | Completely disable this agent                                    |
+| `ui.hidden`               | boolean  | false                | Hide from agent selector (opt-out)                               |
+| `ui.selectable`           | boolean  | true                 | Legacy — show in selector (opt-in)                               |
+| `ui.disabled`             | boolean  | false                | Completely hide even from settings                               |
+| `ui.color`                | string   | —                    | CSS color for UI badge (inherited from base if not set)          |
+| `ui.routable`             | boolean  | (same as selectable) | Allow `switch_agent` to target this agent                        |
+| `ui.requires`             | string[] | —                    | UI requirements for selection (currently: `"desktop"`)           |
+| `prompt.append`           | boolean  | true                 | `true` = append body to base body; `false` = replace             |
+| `subagent.runnable`       | boolean  | false                | Allow spawning via `task({ agentId: ... })`                      |
+| `subagent.append_prompt`  | string   | —                    | Extra instructions appended when running as sub-agent            |
+| `subagent.skip_init_hook` | boolean  | false                | Skip `.mux/init` hook when spawned as sub-agent                  |
+| `ai.model`                | string   | —                    | Default model (full ID or abbreviation like "sonnet")            |
+| `ai.thinkingLevel`        | string   | —                    | Thinking budget: `low`, `medium`, or `high`                      |
+| `tools.add`               | string[] | —                    | Regex patterns to enable tools                                   |
+| `tools.remove`            | string[] | —                    | Regex patterns to disable tools (applied after `add`)            |
+| `tools.require`           | string[] | —                    | Force-enable specific tools (last entry wins across inheritance) |
 
 ### Markdown body
 
@@ -365,14 +372,18 @@ Override the built-in compact agent with custom summarization behavior:
 
 ```md
 # ~/.mux/agents/compact.md
+
 ---
+
 name: Compact
 description: History compaction with project-aware context preservation
+
 ---
 
 You are running a compaction/summarization pass. Your task is to write a concise summary of the conversation so far.
 
 IMPORTANT:
+
 - Preserve any references to project-specific conventions, file paths, and architectural decisions
 - Keep TODO items and action items verbatim
 - Summarize code changes as diffs, not full listings
@@ -384,6 +395,7 @@ IMPORTANT:
 ### My agent doesn't appear in the selector
 
 Check:
+
 1. File is in `.mux/agents/` (project) or `~/.mux/agents/` (global)
 2. Filename matches the `name` field (case-insensitive)
 3. `ui.hidden` is not `true` and `ui.disabled` is not `true`
@@ -401,6 +413,7 @@ Check:
 ### Sub-agent can't use a tool I declared
 
 Sub-agents have hard runtime restrictions that override agent definitions:
+
 - `ask_user_question` and `switch_agent` are always blocked
 - `task_*` tools are blocked when nesting depth exceeds the limit
 - Plan-like sub-agents must use `propose_plan`; non-plan sub-agents must use `agent_report`

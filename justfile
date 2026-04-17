@@ -32,7 +32,7 @@ mac: build
 
 # Full rebuild + replace system CLI with repo-built binary
 #
-# Usage: just cli [dry-run=true]
+# Usage: DRYRUN=true just cli
 #
 # This recipe:
 # 1. Builds the project (make build)
@@ -51,11 +51,23 @@ cli:
     # Get DRYRUN from just args, default to false
     DRYRUN="${DRYRUN:-false}"
 
+    if [ "$DRYRUN" = "true" ]; then
+        echo "DRY RUN: Would run 'just build' before installing the CLI"
+    else
+        just build
+    fi
+
     CLI_SRC="$(pwd)/dist/cli/index.js"
 
     if [ ! -f "$CLI_SRC" ]; then
         echo "Error: Built CLI not found at $CLI_SRC" >&2
         exit 1
+    fi
+
+    if [ "$DRYRUN" = "true" ]; then
+        echo "DRY RUN: Would ensure $CLI_SRC is executable"
+    else
+        chmod +x "$CLI_SRC"
     fi
 
     EXISTING=$(which mux 2>/dev/null || true)
@@ -124,12 +136,12 @@ cli:
         # Verify the new CLI works
         hash -r 2>/dev/null || true
         export PATH="$(dirname "$DEST"):$PATH"
-        if ! mux --version; then
+        if ! "$DEST" --version; then
             echo "Error: New CLI failed to run" >&2
             # Attempt rollback
+            $RM "$DEST" 2>/dev/null || true
             if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then
                 echo "Attempting rollback..."
-                $RM "$DEST" 2>/dev/null || true
                 mv "$BACKUP" "$DEST" 2>/dev/null && echo "Restored backup"
             fi
             exit 1

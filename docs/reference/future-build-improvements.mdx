@@ -1,0 +1,24 @@
+---
+title: Future Build Improvements
+description: Validation notes and follow-up ideas for the local build and CLI install workflow.
+---
+
+## Validation Snapshot
+
+Validated on April 17, 2026:
+
+- `just build` completed successfully and emitted the CLI artifacts under `dist/cli/`.
+- `just cli` failed before the fix because it linked `~/.local/bin/mux` to `dist/cli/index.js`, but the built file was not executable (`0644`), so the shell returned `Permission denied`.
+
+## Improvements Landed
+
+- `make build` now marks `dist/cli/index.js` executable so the built CLI can be invoked directly.
+- `just cli` now rebuilds before installing, re-applies the executable bit for older local builds, verifies the installed path directly, and removes broken links if verification fails.
+
+## Follow-up Improvements
+
+1. Add a dedicated `just build-cli` or `just install-cli` path so CLI-only workflows do not need the full desktop build.
+2. Add an automated smoke check that executes `dist/cli/index.js --version` directly after the build.
+3. Add CI coverage for the `just build` → `just cli` → `mux --version` flow on Linux and macOS.
+4. Consider installing a tiny wrapper script instead of a repo-path symlink so local CLI installs survive repo moves.
+5. Print explicit PATH guidance when installing to `~/.local/bin` and that directory is not discoverable by the current shell.

@@ -137,3 +137,4 @@ benchmarks/terminal_bench/.leaderboard_cache/
 jobs/
 
 dogfood-output/
+.omx/

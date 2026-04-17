@@ -11,23 +11,23 @@ The `task` tool creates a child workspace and runs an agent in it:
 
 ```ts
 task({
-  agentId: "explore",       // Which agent profile to use
+  agentId: "explore", // Which agent profile to use
   title: "Find auth files", // Workspace title
-  prompt: "Locate all authentication middleware files and report their paths"
-})
+  prompt: "Locate all authentication middleware files and report their paths",
+});
 ```
 
 ### Which agents can be spawned?
 
 Only agents with `subagent.runnable: true` can be used with the `task` tool. Built-in runnable agents:
 
-| Agent | Purpose | Key Restrictions |
-|---|---|---|
-| `exec` | Full implementation | All tools minus `propose_plan`, `ask_user_question` |
-| `plan` | Structured planning | File edits restricted to plan file |
-| `explore` | Read-only investigation | No file edits, no git modifications |
-| `orchestrator` | Coordinate sub-agents | No direct file edits (applies patches via `task_apply_git_patch`) |
-| `desktop` | GUI automation | Screenshot-driven interaction only |
+| Agent          | Purpose                 | Key Restrictions                                                  |
+| -------------- | ----------------------- | ----------------------------------------------------------------- |
+| `exec`         | Full implementation     | All tools minus `propose_plan`, `ask_user_question`               |
+| `plan`         | Structured planning     | File edits restricted to plan file                                |
+| `explore`      | Read-only investigation | No file edits, no git modifications                               |
+| `orchestrator` | Coordinate sub-agents   | No direct file edits (applies patches via `task_apply_git_patch`) |
+| `desktop`      | GUI automation          | Screenshot-driven interaction only                                |
 
 ### Custom sub-agents
 
@@ -74,6 +74,7 @@ User → Orchestrator
 ```
 
 Key orchestrator rules:
+
 - **No direct file edits** — orchestrator delegates via `task` and integrates via `task_apply_git_patch`
 - **No PR creation** — the parent workspace handles all PR management
 - **Must call `agent_report`** exactly once with: what changed, what was verified, and any risks
@@ -90,8 +91,8 @@ task({
   1. Add refresh token generation to auth service
   2. Add /auth/refresh endpoint
   3. Add client-side refresh interceptor
-  4. Add tests for all three layers`
-})
+  4. Add tests for all three layers`,
+});
 ```
 
 ## Best of N
@@ -101,14 +102,15 @@ The `task` tool supports `n` for parallel independent attempts at the same probl
 ```ts
 task({
   prompt: "Find the root cause of the memory leak in the streaming handler",
-  n: 3,  // Run 3 independent attempts
-})
+  n: 3, // Run 3 independent attempts
+});
 ```
 
 Each child workspace gets the same prompt. Mux waits for all children to complete, then presents the results together.
 
 <Note>
-Start with `best of 3` or `best of 5`. Larger batches cost more tokens and take longer, but pay off on high-stakes or open-ended problems.
+  Start with `best of 3` or `best of 5`. Larger batches cost more tokens and take longer, but pay
+  off on high-stakes or open-ended problems.
 </Note>
 
 ### How Best-of-N works internally
@@ -136,20 +138,20 @@ task({
     { label: "frontend", prompt: "Review the changes in frontend" },
     { label: "backend", prompt: "Review the changes in backend" },
     { label: "tests", prompt: "Review the changes in tests" },
-  ]
-})
+  ],
+});
 ```
 
 Each variant gets its own workspace with the same base template but a different labeled focus. This is more efficient than spawning entirely separate tasks.
 
 ### Best-of-N vs Variants
 
-| Feature | Best-of-N | Variants |
-|---|---|---|
-| Same prompt? | Yes, identical | Same template, different focus |
-| Purpose | Multiple attempts at one answer | Parallel lanes for different scopes |
-| Result | Pick the best | Collect all results |
-| Example | "Find the root cause" × 3 | "Review frontend" / "Review backend" |
+| Feature      | Best-of-N                       | Variants                             |
+| ------------ | ------------------------------- | ------------------------------------ |
+| Same prompt? | Yes, identical                  | Same template, different focus       |
+| Purpose      | Multiple attempts at one answer | Parallel lanes for different scopes  |
+| Result       | Pick the best                   | Collect all results                  |
+| Example      | "Find the root cause" × 3       | "Review frontend" / "Review backend" |
 
 ## Switching Agents Mid-Conversation
 
@@ -157,8 +159,8 @@ The `switch_agent` tool allows changing the active agent within a workspace with
 
 ```ts
 switch_agent({
-  agentId: "plan"  // Switch from exec to plan mode
-})
+  agentId: "plan", // Switch from exec to plan mode
+});
 ```
 
 ### Which agents can be switched to?
@@ -179,7 +181,8 @@ ui:
 ```
 
 <Warning>
-`switch_agent` is disabled by default for sub-agents. Only the main workspace (top-level conversation) can use it unless explicitly enabled via `tools.require: ["switch_agent"]`.
+  `switch_agent` is disabled by default for sub-agents. Only the main workspace (top-level
+  conversation) can use it unless explicitly enabled via `tools.require: ["switch_agent"]`.
 </Warning>
 
 ## Practical Patterns
@@ -201,7 +204,7 @@ For complex multi-file changes:
 Explore(investigate codebase)
   ↓ findings
 Plan(create implementation plan)
-  ↓ approved plan  
+  ↓ approved plan
 Orchestrator(spawn exec tasks for each step)
   ├── Exec(task A: implement auth refresh)
   ├── Exec(task B: add refresh endpoint)
@@ -228,8 +231,8 @@ Three plan-mode agents independently analyze and propose solutions. You pick the
 task({
   agentId: "security-review",
   title: "Security audit of auth module",
-  prompt: "Review src/auth/ for: injection flaws, broken auth, sensitive data exposure"
-})
+  prompt: "Review src/auth/ for: injection flaws, broken auth, sensitive data exposure",
+});
 ```
 
 ### Pattern: Skip init hook for fast sub-agents
@@ -252,6 +255,7 @@ subagent:
 When sub-agents complete, they send an `agent_report` back to the parent workspace. The parent sees this as a `<mux_subagent_report>` block in the conversation, which is treated as trusted tool output.
 
 Report best practices:
+
 - Include **what changed** (file paths and key details)
 - Include **what was verified** (tests, lint, typecheck commands run)
 - Include **follow-ups/risks** (anything the parent should know about)

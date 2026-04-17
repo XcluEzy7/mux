@@ -1103,16 +1103,18 @@ export function ProvidersSection() {
     muxGatewayIsLoggedIn,
     refreshMuxGatewayAccountStatus,
   ]);
+  const syntheticNewIsConfigured = config?.["synthetic-new"]?.isConfigured ?? false;
+
   useEffect(() => {
     if (expandedProvider !== "synthetic-new") return;
     // Only fetch if the provider is actually configured
-    if (!config?.["synthetic-new"]?.isConfigured) return;
+    if (!syntheticNewIsConfigured) return;
     // Only fetch if not already loaded/loading/errored
     if (syntheticQuota || syntheticQuotaLoading || syntheticQuotaError) return;
     void refreshSyntheticQuota();
   }, [
     expandedProvider,
-    config?.["synthetic-new"]?.isConfigured,
+    syntheticNewIsConfigured,
     syntheticQuota,
     syntheticQuotaLoading,
     syntheticQuotaError,
