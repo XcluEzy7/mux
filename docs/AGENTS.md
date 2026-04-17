@@ -46,6 +46,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - Package manager: bun only. Use `bun install`, `bun add`, `bun run` (which proxies to Make when relevant). Run `bun install` if modules/types go missing.
 - Makefile is source of truth (new commands land there, not `package.json`).
+- `justfile` provides convenient shortcuts for common workflows (complements Makefile)
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
 - `.mux/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
@@ -237,3 +238,16 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 ## GitHub
 
 Many tasks involve reading and writing from GitHub, prefer the `gh` CLI over web search and manual curl requests when helping the User.
+
+## Coderabbit review
+# Plain mode (default) - detailed feedback with fix suggestions
+cr
+
+# Explicit plain mode
+cr --plain
+
+# Agent mode - structured JSON output for Skills and agent integrations
+cr --agent
+
+# Interactive mode - terminal UI for manual review
+cr --interactive
