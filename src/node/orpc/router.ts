@@ -5017,15 +5017,20 @@ export const router = (authToken?: string) => {
           // 2. Fetch models from /openai/v1/models
           const baseUrl = creds.baseUrl ?? "https://api.synthetic.new";
           let response: Response;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10_000);
           try {
             response = await fetch(`${baseUrl}/openai/v1/models`, {
               headers: {
                 Accept: "application/json",
                 Authorization: `Bearer ${creds.apiKey}`,
               },
+              signal: controller.signal,
             });
           } catch (error) {
             return Err(`Synthetic model fetch failed: ${getErrorMessage(error)}`);
+          } finally {
+            clearTimeout(timeout);
           }
 
           // 3. Handle HTTP errors
@@ -5087,15 +5092,20 @@ export const router = (authToken?: string) => {
           const baseUrl = creds.baseUrl ?? "https://api.synthetic.new";
 
           let response: Response;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10_000);
           try {
             response = await fetch(`${baseUrl}/v2/quotas`, {
               headers: {
                 Accept: "application/json",
                 Authorization: `Bearer ${creds.apiKey}`,
               },
+              signal: controller.signal,
             });
           } catch (error) {
             return Err(`Synthetic quota fetch failed: ${getErrorMessage(error)}`);
+          } finally {
+            clearTimeout(timeout);
           }
 
           if (response.status === 401) {

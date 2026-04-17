@@ -22,7 +22,9 @@ export function formatSyntheticQuota(quota: SyntheticQuota | null | undefined): 
 /** Relative time string for renewal date, e.g. "in 23 days" */
 export function formatSyntheticRenewal(renewsAt: string | null | undefined): string {
   if (!renewsAt) return "";
-  const diff = new Date(renewsAt).getTime() - Date.now();
+  const renewsAtMs = new Date(renewsAt).getTime();
+  if (!Number.isFinite(renewsAtMs)) return "";
+  const diff = renewsAtMs - Date.now();
   if (diff <= 0) return "resets soon";
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
   if (days > 1) return `resets in ${days} days`;
@@ -48,9 +50,11 @@ export function useSyntheticQuota() {
         setData(result.data);
         return result.data;
       }
+      setData(null);
       setError(result.error);
       return null;
     } catch (err) {
+      setData(null);
       setError(getErrorMessage(err));
       return null;
     } finally {
