@@ -7,10 +7,10 @@ description: Guidelines for using the GitHub CLI (gh) for GitHub Actions and Git
 
 ## Repo Default
 
-Always ensure `gh repo set-default` points to your fork/origin repo, **not** the upstream. Set it once:
+In this repo, set `gh repo set-default` to the writable origin repo (`XcluEzy7/mux`), not the upstream (`coder/mux`). Set it once:
 
 ```bash
-gh repo set-default <owner>/<repo>
+gh repo set-default XcluEzy7/mux
 ```
 
 Verify with:
@@ -21,14 +21,14 @@ gh repo set-default --view
 
 ## Remotes Convention
 
-- `origin` — your fork (e.g., `XcluEzy7/mux`); this is where you push branches and create PRs
-- `upstream` — the upstream project (e.g., `coder/mux`); read-only for fetching latest changes
+- `origin` — this repo's writable main remote (`XcluEzy7/mux`); push branches here and target PRs at `origin/main`
+- `upstream` — the upstream project (`coder/mux`); read-only for fetching latest changes
 
 ```bash
 git remote add upstream https://github.com/coder/mux.git
 ```
 
-When running `gh` commands without `--repo`, it uses the default repo. Always confirm it's your fork, not upstream.
+When running `gh` commands without `--repo`, it uses the default repo. Keep it set to `XcluEzy7/mux`, not upstream.
 
 ## PR Management
 
@@ -43,8 +43,10 @@ gh pr diff <number>
 ### Create PRs
 
 ```bash
-gh pr create --title "feat: description" --body "Summary of changes"
+gh pr create --base main --title "feat: description" --body "Summary of changes"
 ```
+
+This keeps the PR targeted at `origin/main` in this repo.
 
 ### PR Checks & Reviews
 
@@ -130,7 +132,7 @@ gh api repos/<owner>/<repo>/pulls/<number>/reviews | jq -r '.[] | "\(.user.login
 
 ## Common Pitfalls
 
-- **Wrong repo default**: `gh` defaults to the repo detected from `git remote`. If origin is your fork but `gh` resolves to upstream, explicitly set `gh repo set-default`.
+- **Wrong repo default**: `gh` defaults to the repo detected from `git remote`. If `gh` resolves to upstream, explicitly set `gh repo set-default XcluEzy7/mux`.
 - **JSON overflow in terminals**: `gh pr view --json` can produce very long lines. Pipe through `jq` or use `--jq` flag.
 - **GraphQL deprecation warnings**: Some API fields (e.g., `projectCards`) are deprecated. Filter them with `--jq` or `jq` to keep output clean.
-- **Never push to upstream**: All pushes go to `origin` (your fork). PRs are created from your fork against upstream.
+- **Never push to upstream**: All pushes go to `origin` (`XcluEzy7/mux`). PRs should target `origin/main`; use upstream only for fetching.

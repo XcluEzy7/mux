@@ -70,6 +70,8 @@ Core workflow:
 
 - If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
+- In this repo, `origin` is the writable main remote (`XcluEzy7/mux`); target PRs at `origin/main` and treat `upstream` (`coder/mux`) as read-only for fetches.
+- If you need `gh repo set-default`, point it at `XcluEzy7/mux` so default PR/repo commands resolve here.
 - In Orchestrator mode, delegate implementation/verification commands to `exec` or `explore` sub-agents and integrate their patches; do not bypass delegation with direct local edits.
 - In Orchestrator mode, route higher-complexity implementation tasks to `plan` sub-agents so they can research and produce a precise plan before auto-handoff to implementation.
 
