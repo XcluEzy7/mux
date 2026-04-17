@@ -2340,6 +2340,12 @@ export const desktop = {
   },
 };
 
+export const synthetic = {
+  refreshModels: {
+    input: z.void(),
+    output: ResultSchema(z.array(z.string()), z.string()),
+  },
+};
 export const ssh = {
   prompt: {
     subscribe: {

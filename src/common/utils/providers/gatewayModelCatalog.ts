@@ -9,9 +9,9 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   models: ProviderModelEntry[] | undefined
 ): boolean {
   // Most provider config model lists are user-managed custom entries, not exhaustive
-  // server catalogs. GitHub Copilot is the current exception because OAuth refresh
-  // stores the full model catalog returned by Copilot's /models endpoint.
-  if (provider !== "github-copilot") {
+  // server catalogs. GitHub Copilot and Synthetic.new are exceptions because their
+  // model-refresh endpoints store the full catalog returned by the server.
+  if (provider !== "github-copilot" && provider !== "synthetic-new") {
     return true;
   }
 
@@ -19,7 +19,26 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
     return true;
   }
 
-  const normalizedModelId = normalizeCopilotModelId(modelId);
+  // For GitHub Copilot, use normalized ID comparison (handles prefix-based mapping)
+  if (provider === "github-copilot") {
+    const normalizedModelId = normalizeCopilotModelId(modelId);
+    let foundValidEntry = false;
+    for (const entry of models) {
+      const configuredModelId = maybeGetProviderModelEntryId(entry);
+      if (configuredModelId == null) {
+        continue;
+      }
+
+      foundValidEntry = true;
+      if (normalizeCopilotModelId(configuredModelId) === normalizedModelId) {
+        return true;
+      }
+    }
+
+    return !foundValidEntry;
+  }
+
+  // For Synthetic.new, direct ID comparison (IDs from /models endpoint are authoritative)
   let foundValidEntry = false;
   for (const entry of models) {
     const configuredModelId = maybeGetProviderModelEntryId(entry);
@@ -28,7 +47,7 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
     }
 
     foundValidEntry = true;
-    if (normalizeCopilotModelId(configuredModelId) === normalizedModelId) {
+    if (configuredModelId === modelId) {
       return true;
     }
   }

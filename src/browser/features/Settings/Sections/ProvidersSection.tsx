@@ -313,6 +313,27 @@ export function ProvidersSection() {
 
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
+
+  // Synthetic.new model refresh state
+  const [syntheticModelsLoading, setSyntheticModelsLoading] = useState(false);
+  const [syntheticModelsStatus, setSyntheticModelsStatus] = useState<string | null>(null);
+
+  const refreshSyntheticModels = useCallback(async () => {
+    setSyntheticModelsLoading(true);
+    setSyntheticModelsStatus(null);
+    try {
+      const result = await api!.synthetic.refreshModels();
+      if (result.success) {
+        setSyntheticModelsStatus(`${result.data.length} models available`);
+      } else {
+        setSyntheticModelsStatus(result.error);
+      }
+    } catch {
+      setSyntheticModelsStatus("Failed to refresh models");
+    } finally {
+      setSyntheticModelsLoading(false);
+    }
+  }, [api]);
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
@@ -1572,6 +1593,28 @@ export function ProvidersSection() {
                         </div>
                       )}
 
+                      {provider === "synthetic-new" && (
+                        <div className="border-border-light space-y-2 border-t pt-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <label className="text-foreground block text-xs font-medium">
+                                Available Models
+                              </label>
+                              {syntheticModelsStatus && (
+                                <span className="text-muted text-xs">{syntheticModelsStatus}</span>
+                              )}
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void refreshSyntheticModels()}
+                              disabled={syntheticModelsLoading}
+                            >
+                              {syntheticModelsLoading ? "Refreshing..." : "Refresh Models"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                       {fields.map((fieldConfig) => {
                         const isEditing =
                           editingField?.provider === provider &&

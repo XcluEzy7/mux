@@ -242,6 +242,7 @@ export {
   ServerAuthSessionSchema,
   serverAuth,
   splashScreens,
+  synthetic,
   tasks,
   experiments,
   ExperimentValueSchema,

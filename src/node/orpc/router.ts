@@ -4991,6 +4991,79 @@ export const router = (authToken?: string) => {
           ),
         })),
     },
+    synthetic: {
+      refreshModels: t
+        .input(schemas.synthetic.refreshModels.input)
+        .output(schemas.synthetic.refreshModels.output)
+        .handler(async ({ context }) => {
+          // 1. Load provider config & resolve credentials
+          const providersConfig = context.config.loadProvidersConfig() ?? {};
+          const syntheticConfig = (providersConfig["synthetic-new"] ?? {}) as Record<
+            string,
+            unknown
+          >;
+          const creds = resolveProviderCredentials("synthetic-new", syntheticConfig);
+
+          if (!creds.isConfigured || !creds.apiKey) {
+            return Err("Synthetic provider is not configured — set an API key first");
+          }
+
+          // 2. Fetch models from /openai/v1/models
+          const baseUrl = creds.baseUrl ?? "https://api.synthetic.new";
+          let response: Response;
+          try {
+            response = await fetch(`${baseUrl}/openai/v1/models`, {
+              headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${creds.apiKey}`,
+              },
+            });
+          } catch (error) {
+            return Err(`Synthetic model fetch failed: ${getErrorMessage(error)}`);
+          }
+
+          // 3. Handle HTTP errors
+          if (response.status === 401) {
+            return Err("Synthetic API key is invalid — check your credentials");
+          }
+          if (!response.ok) {
+            let body = "";
+            try {
+              body = await response.text();
+            } catch {
+              /* ignore */
+            }
+            return Err(
+              `Synthetic model fetch failed (HTTP ${response.status}): ${body.trim().slice(0, 200)}`
+            );
+          }
+
+          // 4. Parse response: { data: [{ id: "hf:deepseek-ai/DeepSeek-V3-0324" }, ...] }
+          let json: unknown;
+          try {
+            json = await response.json();
+          } catch (error) {
+            return Err(`Synthetic model response was not valid JSON: ${getErrorMessage(error)}`);
+          }
+
+          const payload = json as { data?: unknown };
+          if (!Array.isArray(payload.data)) {
+            return Err("Synthetic model response missing 'data' array");
+          }
+
+          const modelIds = payload.data
+            .map((entry: unknown) => (entry as { id?: unknown }).id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+          if (modelIds.length === 0) {
+            return Err("No models returned from Synthetic API");
+          }
+
+          // 5. Persist models and return
+          context.providerService.setModels("synthetic-new", modelIds);
+          return Ok(modelIds);
+        }),
+    },
     ssh: {
       prompt: {
         subscribe: t
