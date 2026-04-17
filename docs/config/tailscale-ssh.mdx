@@ -31,16 +31,16 @@ If you prefer traditional SSH with Tailscale as a transport, add this to your cl
 
 ```text
 Host mux-server
-  HostName <your-tailnet-name>.tail-scale.ts.net
+  HostName your-server.tailnet.ts.net
   User <your-tailscale-user>
-  ProxyCommand tailscale ssh --exit-node %h
+  ProxyCommand tailscale nc %h %p
   ForwardAgent yes
 ```
 
 Replace:
 
 - `mux-server` with your preferred alias
-- `<your-tailnet-name>.tail-scale.ts.net` with your server's Tailscale hostname
+- `your-server.tailnet.ts.net` with your server's MagicDNS hostname
 - `<your-tailscale-user>` with your Tailscale identity
 
 ## Configuring in Mux
@@ -59,10 +59,10 @@ If you need to disable Tailscale SSH:
 
 ## Deep Link Support
 
-When Tailscale SSH is enabled, Mux registers a handler for editor deep links. This allows editors like Zed to open files directly via URLs like:
+When Tailscale SSH is enabled, Mux registers a handler for `mux://` deep links. This allows Mux URLs to open the relevant workspace or file context directly, for example:
 
-```
-zed://open?url=file:///path/to/file&line=10
+```text
+mux://chat/new?projectPath=/path/to/project&prompt=Open%20the%20selected%20file
 ```
 
 Mux intercepts these links over the Tailscale connection and forwards them to the local editor on the server.

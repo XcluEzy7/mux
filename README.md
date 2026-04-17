@@ -105,17 +105,17 @@ See [the documentation](https://mux.coder.com) for more details.
 
 ## Development
 
-This project uses [just](https://github.com/casey/just) as a command runner. Key recipes:
+This project uses the [Makefile](./Makefile) as the primary command runner. Use `make` for the main workflows:
 
 | Command      | Description                                                |
 | ------------ | ---------------------------------------------------------- |
-| `just dev`   | Start dev server (backend :3000 + frontend :5173 with HMR) |
-| `just build` | Full build (renderer + main + preload + icons + static)    |
-| `just web`   | Build web frontend only (Vite → dist/)                     |
-| `just clean` | Clean all build artifacts                                  |
-| `just list`  | List all available recipes                                 |
+| `make dev`   | Start dev server (backend :3000 + frontend :5173 with HMR) |
+| `make build` | Full build (renderer + main + preload + icons + static)    |
+| `make web`   | Build web frontend only (Vite → dist/)                     |
+| `make clean` | Clean all build artifacts                                  |
+| `make help`  | List all available targets                                 |
 
-> The `justfile` wraps the `Makefile` targets. You can also use `make` directly (`make dev`, `make build`, etc.).
+If you prefer Bun, `bun run <target>` proxies to the same Make targets.
 
 See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 
