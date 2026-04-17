@@ -13,7 +13,7 @@ const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
 
 // Vite server configuration (for dev-server remote access)
 const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by default
-const devServerPort = Number(process.env.MUX_VITE_PORT ?? "5173");
+const devServerPort = Number(process.env.MUX_VITE_PORT ?? "3010");
 
 const devServerAllowedHosts = (() => {
   const raw = process.env.MUX_VITE_ALLOWED_HOSTS?.trim();
@@ -79,7 +79,7 @@ function formatHostForUrl(host: string): string {
 // In dev-server mode we run the backend on a separate local port, but we want the
 // browser UI to talk to it via same-origin paths (single public port).
 const backendProxyHost = process.env.MUX_BACKEND_HOST ?? "127.0.0.1";
-const backendProxyPort = Number(process.env.MUX_BACKEND_PORT ?? "3000");
+const backendProxyPort = Number(process.env.MUX_BACKEND_PORT ?? "5173");
 const backendProxyTarget = `http://${formatHostForUrl(backendProxyHost)}:${backendProxyPort}`;
 
 const alias: Record<string, string> = {

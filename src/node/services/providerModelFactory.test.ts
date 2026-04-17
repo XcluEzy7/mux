@@ -67,11 +67,11 @@ describe("normalizeCodexResponsesBody", () => {
       store: boolean;
       temperature: number;
       text: unknown;
-      truncation: string;
+      truncation?: unknown;
     };
 
     expect(normalized.store).toBe(false);
-    expect(normalized.truncation).toBe("disabled");
+    expect(normalized.truncation).toBeUndefined();
     expect(normalized.temperature).toBe(0.2);
     expect(normalized.text).toEqual({ format: { type: "json_schema", name: "result" } });
     expect(normalized.metadata).toBeUndefined();
@@ -79,7 +79,7 @@ describe("normalizeCodexResponsesBody", () => {
     expect(normalized.input).toEqual([{ role: "user", content: "Ship the fix." }]);
   });
 
-  it("preserves explicit auto truncation", () => {
+  it("drops explicit truncation because the Codex OAuth endpoint rejects it", () => {
     const normalized = JSON.parse(
       normalizeCodexResponsesBody(
         JSON.stringify({
@@ -88,9 +88,9 @@ describe("normalizeCodexResponsesBody", () => {
           truncation: "auto",
         })
       )
-    ) as { truncation: string; store: boolean };
+    ) as { truncation?: unknown; store: boolean };
 
-    expect(normalized.truncation).toBe("auto");
+    expect(normalized.truncation).toBeUndefined();
     expect(normalized.store).toBe(false);
   });
 });

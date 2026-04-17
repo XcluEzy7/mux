@@ -662,7 +662,6 @@ const CODEX_ALLOWED_PARAMS = new Set([
   "top_p",
   "include",
   "text", // structured output via Output.object -> text.format
-  "truncation",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -693,10 +692,11 @@ function extractTextContent(content: unknown): string {
 
 export function normalizeCodexResponsesBody(body: string): string {
   const json = JSON.parse(body) as Record<string, unknown>;
-  const truncation = json.truncation;
-  if (truncation !== "auto" && truncation !== "disabled") {
-    json.truncation = "disabled";
-  }
+
+  // ChatGPT's Codex OAuth Responses endpoint rejects the OpenAI platform
+  // `truncation` parameter entirely, so strip it and rely on Mux-managed
+  // history compaction instead of server-side truncation.
+  delete json.truncation;
 
   // Codex-compatible Responses requests must disable storage and strip unsupported params.
   json.store = false;
