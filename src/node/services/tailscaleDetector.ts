@@ -37,7 +37,7 @@ function isTailscaleIP(ip: string): boolean {
   if (parts.length !== 4) return false;
   const nums = parts.map(Number);
   if (nums.some((n) => isNaN(n) || n < 0 || n > 255)) return false;
-  const value = (nums[0]! << 24) | (nums[1]! << 16) | (nums[2]! << 8) | nums[3]!;
+  const value = (nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3];
   return (value & TAILSCALE_CIDR_MASK) === TAILSCALE_CIDR_START;
 }
 
@@ -111,7 +111,7 @@ function detectFromNetworkInterfaces(): TailscaleInfo {
   const ifaces = os.networkInterfaces();
 
   // Check for dedicated tailscale0 interface first
-  const tailscaleIface = ifaces["tailscale0"];
+  const tailscaleIface = ifaces.tailscale0;
   if (tailscaleIface != null) {
     const ipv4 = tailscaleIface.find((a) => a.family === "IPv4");
     if (ipv4 != null) {
