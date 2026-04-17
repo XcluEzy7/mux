@@ -156,14 +156,15 @@ function detectFromNetworkInterfaces(): TailscaleInfo {
  * Returns `{ available: false }` immediately on Windows because Tailscale SSH
  * is not supported there.
  */
-export async function detectTailscale(): Promise<TailscaleInfo> {
+export async function detectTailscale(options: { force?: boolean } = {}): Promise<TailscaleInfo> {
   // Windows is not supported for Tailscale SSH
   if (process.platform === "win32") {
     return UNAVAILABLE;
   }
 
-  // Return cached result if still valid
-  if (cachedResult != null && Date.now() < cacheExpiresAt) {
+  if (options.force === true) {
+    clearTailscaleCache();
+  } else if (cachedResult != null && Date.now() < cacheExpiresAt) {
     return cachedResult;
   }
 

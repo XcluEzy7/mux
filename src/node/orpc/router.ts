@@ -466,8 +466,8 @@ export const router = (authToken?: string) => {
       detectTailscale: t
         .input(schemas.server.detectTailscale.input)
         .output(schemas.server.detectTailscale.output)
-        .handler(async () => {
-          return detectTailscale();
+        .handler(async ({ input }) => {
+          return detectTailscale({ force: input.force === true });
         }),
       getApiServerStatus: t
         .input(schemas.server.getApiServerStatus.input)

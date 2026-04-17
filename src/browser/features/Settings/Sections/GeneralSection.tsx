@@ -438,25 +438,28 @@ export function GeneralSection() {
     [api, tailscaleSshConfig]
   );
 
-  const handleDetectTailscale = useCallback(async () => {
-    if (!api) {
-      return;
-    }
-    setDetecting(true);
-    try {
-      const info = await api.server.detectTailscale();
-      setTailscaleInfo(info);
-      // Auto-fill sshHost from detected hostname/IP if not already set
-      if (tailscaleSshConfig && !tailscaleSshConfig.sshHost && (info.hostname ?? info.ip)) {
-        const autoHost = info.hostname ?? info.ip ?? "";
-        const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: autoHost };
-        setTailscaleSshConfig(next);
-        void api.server.setTailscaleSsh({ config: next });
+  const handleDetectTailscale = useCallback(
+    async (force = false) => {
+      if (!api) {
+        return;
       }
-    } finally {
-      setDetecting(false);
-    }
-  }, [api, tailscaleSshConfig]);
+      setDetecting(true);
+      try {
+        const info = await api.server.detectTailscale({ force });
+        setTailscaleInfo(info);
+        // Auto-fill sshHost from detected hostname/IP if not already set
+        if (tailscaleSshConfig && !tailscaleSshConfig.sshHost && (info.hostname ?? info.ip)) {
+          const autoHost = info.hostname ?? info.ip ?? "";
+          const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: autoHost };
+          setTailscaleSshConfig(next);
+          void api.server.setTailscaleSsh({ config: next });
+        }
+      } finally {
+        setDetecting(false);
+      }
+    },
+    [api, tailscaleSshConfig]
+  );
 
   useEffect(() => {
     if (!api) {
@@ -828,7 +831,7 @@ export function GeneralSection() {
               <div className="flex items-center gap-2">
                 <Button
                   onClick={() => {
-                    void handleDetectTailscale();
+                    void handleDetectTailscale(true);
                   }}
                   disabled={detecting}
                   size="sm"

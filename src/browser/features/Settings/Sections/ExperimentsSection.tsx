@@ -614,42 +614,51 @@ export function TailscaleSshControls() {
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
-  const loadInfo = useCallback(async () => {
-    if (!api) {
-      return;
-    }
-
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const info = await api.server.detectTailscale();
-      if (requestIdRef.current !== requestId) {
+  const loadInfo = useCallback(
+    async (force = false) => {
+      if (!api) {
         return;
       }
-      setTailscaleInfo(info);
-    } catch (e) {
-      if (requestIdRef.current !== requestId) {
-        return;
+
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+
+      setLoading(true);
+      setError(null);
+      setTailscaleInfo(null);
+
+      try {
+        const info = await api.server.detectTailscale({ force });
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+        setTailscaleInfo(info);
+      } catch (e) {
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+        setTailscaleInfo(null);
+        setError(getErrorMessage(e));
+      } finally {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
       }
-      setError(getErrorMessage(e));
-    } finally {
-      if (requestIdRef.current === requestId) {
-        setLoading(false);
-      }
-    }
-  }, [api]);
+    },
+    [api]
+  );
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !api) {
+      requestIdRef.current += 1;
+      setTailscaleInfo(null);
+      setLoading(false);
+      setError(null);
       return;
     }
 
     void loadInfo();
-  }, [enabled, loadInfo]);
+  }, [api, enabled, loadInfo]);
 
   if (!enabled) {
     return null;
@@ -660,7 +669,7 @@ export function TailscaleSshControls() {
       <div className="text-foreground flex items-center justify-between font-medium">
         <span>Tailscale Status</span>
         <Button
-          onClick={() => void loadInfo()}
+          onClick={() => void loadInfo(true)}
           disabled={loading}
           size="sm"
           variant="ghost"

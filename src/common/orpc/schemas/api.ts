@@ -1738,7 +1738,7 @@ export const server = {
     output: z.void(),
   },
   detectTailscale: {
-    input: z.void(),
+    input: z.object({ force: z.boolean().nullish() }),
     output: TailscaleInfoSchema,
   },
   getApiServerStatus: {
