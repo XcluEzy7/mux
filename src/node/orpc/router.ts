@@ -31,6 +31,7 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
+import { detectTailscale } from "@/node/services/tailscaleDetector";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -465,15 +466,8 @@ export const router = (authToken?: string) => {
       detectTailscale: t
         .input(schemas.server.detectTailscale.input)
         .output(schemas.server.detectTailscale.output)
-        .handler(() => {
-          // Placeholder: actual detection implemented in Phase 2
-          return {
-            available: false,
-            ip: null,
-            hostname: null,
-            sshEnabled: false,
-            tailnet: null,
-          };
+        .handler(async () => {
+          return detectTailscale();
         }),
       getApiServerStatus: t
         .input(schemas.server.getApiServerStatus.input)
