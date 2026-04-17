@@ -31,6 +31,12 @@ Mux is a desktop & browser application for parallel agentic development. It enab
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
+## Remote Access
+
+Mux supports Tailscale SSH for remote editor connections. When running Mux as a remote server, enable the Tailscale SSH experiment (on by default) to allow editors like Zed to open files via Tailscale-hosted deep links.
+
+See the [Tailscale SSH documentation](docs/config/tailscale-ssh.mdx) for setup instructions.
+
 Mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
 like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
@@ -96,6 +102,18 @@ macOS and Linux.
 See [the documentation](https://mux.coder.com) for more details.
 
 ## Development
+
+This project uses the [Makefile](./Makefile) as the primary command runner. Use `make` for the main workflows:
+
+| Command      | Description                                                |
+| ------------ | ---------------------------------------------------------- |
+| `make dev`   | Start dev server (backend :3000 + frontend :5173 with HMR) |
+| `make build` | Full build (renderer + main + preload + icons + static)    |
+| `make web`   | Build web frontend only (Vite → dist/)                     |
+| `make clean` | Clean all build artifacts                                  |
+| `make help`  | List all available targets                                 |
+
+If you prefer Bun, `bun run <target>` proxies to the same Make targets.
 
 See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 

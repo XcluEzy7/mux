@@ -82,6 +82,13 @@ export const AppConfigOnDiskSchema = z
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
     onePasswordAccountName: z.string().optional(),
+    tailscaleSsh: z
+      .object({
+        enabled: z.boolean().default(false),
+        sshHost: z.string().optional(),
+        proxyCommand: z.boolean().default(true),
+      })
+      .optional(),
   })
   .passthrough();
 

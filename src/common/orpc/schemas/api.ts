@@ -126,6 +126,25 @@ export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntr
 
 const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "failed"]);
 
+// Tailscale SSH types
+export const TailscaleSshConfigSchema = z.object({
+  enabled: z.boolean(),
+  sshHost: z.string().optional(),
+  proxyCommand: z.boolean(),
+});
+
+export type TailscaleSshConfig = z.infer<typeof TailscaleSshConfigSchema>;
+
+export const TailscaleInfoSchema = z.object({
+  available: z.boolean(),
+  ip: z.string().nullable(),
+  hostname: z.string().nullable(),
+  sshEnabled: z.boolean(),
+  tailnet: z.string().nullable(),
+});
+
+export type TailscaleInfo = z.infer<typeof TailscaleInfoSchema>;
+
 export const ProjectGitStatusResultSchema = z.object({
   projectPath: z.string(),
   projectName: z.string(),
@@ -1709,6 +1728,18 @@ export const server = {
   setSshHost: {
     input: z.object({ sshHost: z.string().nullable() }),
     output: z.void(),
+  },
+  getTailscaleSsh: {
+    input: z.void(),
+    output: TailscaleSshConfigSchema.nullable(),
+  },
+  setTailscaleSsh: {
+    input: z.object({ config: TailscaleSshConfigSchema.nullable() }),
+    output: z.void(),
+  },
+  detectTailscale: {
+    input: z.object({ force: z.boolean().nullish() }),
+    output: TailscaleInfoSchema,
   },
   getApiServerStatus: {
     input: z.void(),

@@ -1,0 +1,105 @@
+---
+title: Tailscale SSH
+description: Set up Tailscale SSH for remote editor connections with Mux
+---
+
+Mux supports Tailscale SSH to enable remote editor connections (like Zed or VS Code Remote) to Mux server workspaces via Tailscale-hosted deep links.
+
+## Prerequisites
+
+- Tailscale installed on both client and server machines
+- Both machines joined to the same Tailscale tailnet
+- Tailscale SSH enabled on the tailnet (or per-device)
+
+## Recommended Setup: Tailscale SSH Server Mode
+
+Tailscale SSH server mode is supported on Linux and macOS. On the machine running Mux as a server, enable it with:
+
+```bash
+# Linux/macOS
+tailscale set --ssh
+
+# Verify SSH is enabled
+tailscale status --self
+```
+
+The `--ssh` flag enables Tailscale SSH for your device. Users connecting to your machine will authenticate via Tailscale's short-lived certificates instead of traditional SSH keys.
+
+## ProxyCommand Fallback
+
+If you prefer traditional SSH with Tailscale as a transport, add this to your client machine's `~/.ssh/config`:
+
+```text
+Host mux-server
+  HostName your-server.tailnet.ts.net
+  User <your-tailscale-user>
+  ProxyCommand tailscale nc %h %p
+```
+
+If you decide to use SSH agent forwarding, add `ForwardAgent yes` explicitly only after considering the security tradeoffs for your workflow.
+
+Replace:
+
+- `mux-server` with your preferred alias
+- `your-server.tailnet.ts.net` with your server's MagicDNS hostname
+- `<your-tailscale-user>` with your Tailscale identity
+
+## Configuring in Mux
+
+### Enable Tailscale SSH
+
+1. Open **Settings → General → Tailscale SSH**
+2. Enable **Enable Tailscale SSH support**
+
+### Disable via Experiments
+
+If you need to disable Tailscale SSH:
+
+1. Open **Settings → Experiments**
+2. Find **Tailscale SSH** and toggle it off
+
+## Deep Link Support
+
+When Tailscale SSH is enabled, Mux registers a handler for `mux://` deep links. This allows Mux URLs to open the relevant workspace or file context directly, for example:
+
+```text
+mux://chat/new?projectPath=/path/to/project&prompt=Open%20the%20selected%20file
+```
+
+Mux intercepts these links over the Tailscale connection and forwards them to the local editor on the server.
+
+## How It Works
+
+1. **Connection**: Client connects to Mux server via Tailscale SSH
+2. **Registration**: Mux server registers the `mux://` URL scheme handler
+3. **Deep Link**: When an editor opens a `mux://` link, Mux processes it
+4. **Forwarding**: Mux forwards the file path to the local editor on the server
+
+This flow works seamlessly because both client and server are on the same Tailscale tailnet.
+
+## Troubleshooting
+
+### Tailscale SSH Not Detected
+
+If Mux doesn't detect Tailscale SSH:
+
+1. Verify `tailscale status` shows the machine
+2. Check that `tailscale ssh` works from the client to server
+3. Ensure Tailscale SSH is enabled in the admin console (if using ACLs)
+
+### Connection Issues
+
+1. Verify both machines are on the same tailnet: `tailscale status`
+2. Test direct Tailscale SSH: `tailscale ssh <user>@<machine>`
+3. Check firewall rules allow Tailscale traffic
+
+### Deep Links Not Working
+
+1. Confirm the Mux server is running with Tailscale SSH enabled
+2. Check that the editor is installed and supports deep links
+3. Verify the client machine can reach the Mux server over Tailscale
+
+## Related
+
+- [SSH Runtime](/runtime/ssh) — General SSH workspace configuration
+- [Server Access](/config/server-access) — Server authentication settings

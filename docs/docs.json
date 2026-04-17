@@ -103,6 +103,7 @@
               "config/keybinds",
               "config/notifications",
               "config/server-access",
+              "config/tailscale-ssh",
               "config/vim-mode"
             ]
           },

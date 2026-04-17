@@ -179,4 +179,17 @@ export interface ProjectsConfig {
 
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;
+
+  /**
+   * Tailscale SSH configuration for remote editor connections.
+   *
+   * - `enabled`: Toggle Tailscale SSH integration
+   * - `sshHost`: Optional manual Tailscale hostname override
+   * - `proxyCommand`: Whether to use SSH ProxyCommand for connections (default: true)
+   */
+  tailscaleSsh?: {
+    enabled: boolean;
+    sshHost?: string;
+    proxyCommand: boolean;
+  };
 }

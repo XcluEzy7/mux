@@ -31,6 +31,7 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
+import { detectTailscale } from "@/node/services/tailscaleDetector";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -446,6 +447,44 @@ export const router = (authToken?: string) => {
             ...config,
             serverSshHost: input.sshHost ?? undefined,
           }));
+        }),
+      getTailscaleSsh: t
+        .input(schemas.server.getTailscaleSsh.input)
+        .output(schemas.server.getTailscaleSsh.output)
+        .handler(({ context }) => {
+          return context.config.loadConfigOrDefault().tailscaleSsh ?? null;
+        }),
+      setTailscaleSsh: t
+        .input(schemas.server.setTailscaleSsh.input)
+        .output(schemas.server.setTailscaleSsh.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => ({
+            ...config,
+            tailscaleSsh: input.config ?? undefined,
+          }));
+
+          // In Electron mode, keep ~/.ssh/config in sync with Mux config.
+          // In server mode, users copy the snippet from Settings — no filesystem access.
+          const isElectron = "electron" in process.versions;
+          if (isElectron) {
+            const {
+              ensureTailscaleSshConfig,
+              removeTailscaleSshConfig,
+            } = await import("@/node/runtime/tailscaleSshConfigWriter");
+            if (input.config?.enabled && input.config.sshHost) {
+              await ensureTailscaleSshConfig({
+                sshHost: input.config.sshHost,
+              });
+            } else {
+              await removeTailscaleSshConfig();
+            }
+          }
+        }),
+      detectTailscale: t
+        .input(schemas.server.detectTailscale.input)
+        .output(schemas.server.detectTailscale.output)
+        .handler(async ({ input }) => {
+          return detectTailscale({ force: input.force === true });
         }),
       getApiServerStatus: t
         .input(schemas.server.getApiServerStatus.input)

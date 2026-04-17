@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Info } from "lucide-react";
+import { AlertTriangle, Info, RefreshCw } from "lucide-react";
 import {
   useExperiment,
   useExperimentValue,
@@ -24,10 +24,12 @@ import {
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
+import type { TailscaleInfo } from "@/common/orpc/schemas/api";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
+import { generateTailscaleSshSnippet } from "@/browser/utils/tailscaleSshSnippet";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
 
@@ -600,6 +602,155 @@ function ConfigurableBindUrlControls() {
   );
 }
 
+/**
+ * Shows Tailscale SSH status and detected info when the experiment is enabled.
+ * Follows the ConfigurableBindUrlControls pattern.
+ */
+export function TailscaleSshControls() {
+  const enabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
+  const { api } = useAPI();
+  const [tailscaleInfo, setTailscaleInfo] = useState<TailscaleInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+
+  const loadInfo = useCallback(
+    async (force = false) => {
+      if (!api) {
+        return;
+      }
+
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+
+      setLoading(true);
+      setError(null);
+      setTailscaleInfo(null);
+
+      try {
+        const info = await api.server.detectTailscale({ force });
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+        setTailscaleInfo(info);
+      } catch (e) {
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+        setTailscaleInfo(null);
+        setError(getErrorMessage(e));
+      } finally {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
+      }
+    },
+    [api]
+  );
+
+  useEffect(() => {
+    if (!enabled || !api) {
+      requestIdRef.current += 1;
+      setTailscaleInfo(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    void loadInfo();
+  }, [api, enabled, loadInfo]);
+
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <div className="bg-background-secondary mb-3 space-y-2 rounded-md p-3 text-xs">
+      <div className="text-foreground flex items-center justify-between font-medium">
+        <span>Tailscale Status</span>
+        <Button
+          onClick={() => void loadInfo(true)}
+          disabled={loading}
+          size="sm"
+          variant="ghost"
+          aria-label="Refresh Tailscale status"
+        >
+          <RefreshCw
+            aria-hidden="true"
+            className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+          />
+        </Button>
+      </div>
+
+      {error != null && (
+        <div className="text-destructive flex items-center gap-1">
+          <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tailscaleInfo != null && (
+        <div className="space-y-1">
+          <div className="flex gap-2">
+            <span className="text-muted w-20 shrink-0">Available</span>
+            <span className="text-foreground">{tailscaleInfo.available ? "Yes" : "No"}</span>
+          </div>
+          {tailscaleInfo.hostname != null && (
+            <div className="flex gap-2">
+              <span className="text-muted w-20 shrink-0">Hostname</span>
+              <span className="text-foreground">{tailscaleInfo.hostname}</span>
+            </div>
+          )}
+          {tailscaleInfo.ip != null && (
+            <div className="flex gap-2">
+              <span className="text-muted w-20 shrink-0">IP</span>
+              <span className="text-foreground">{tailscaleInfo.ip}</span>
+            </div>
+          )}
+          {tailscaleInfo.tailnet != null && (
+            <div className="flex gap-2">
+              <span className="text-muted w-20 shrink-0">Tailnet</span>
+              <span className="text-foreground">{tailscaleInfo.tailnet}</span>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <span className="text-muted w-20 shrink-0">SSH</span>
+            <span className="text-foreground">
+              {tailscaleInfo.sshEnabled ? "Enabled" : "Disabled"}
+            </span>
+          </div>
+
+          {tailscaleInfo.available && !tailscaleInfo.sshEnabled && (
+            <div className="pt-1">
+              <div className="text-muted mb-1">
+                ProxyCommand snippet for{" "}
+                <code className="bg-background rounded px-0.5">~/.ssh/config</code>:
+              </div>
+              <div className="bg-background relative rounded p-2">
+                <pre className="text-foreground overflow-x-auto">
+                  {generateTailscaleSshSnippet(tailscaleInfo)}
+                </pre>
+                <div className="absolute top-1 right-1">
+                  <CopyButton text={generateTailscaleSshSnippet(tailscaleInfo)} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <a
+        href="https://tailscale.com/kb/1193/tailscale-ssh"
+        target="_blank"
+        rel="noreferrer"
+        className="text-primary hover:underline"
+      >
+        Tailscale SSH docs
+      </a>
+    </div>
+  );
+}
+
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
@@ -658,6 +809,7 @@ export function ExperimentsSection() {
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
               {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}
+              {exp.id === EXPERIMENT_IDS.TAILSCALE_SSH && <TailscaleSshControls />}
             </React.Fragment>
           );
         })}
