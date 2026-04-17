@@ -218,9 +218,10 @@ async function detectTailscaleUncached(): Promise<TailscaleInfo> {
   const sshBlocked = healthMessages.some(
     (msg) => /ssh/i.test(msg) && /disabled|blocked|not running/i.test(msg)
   );
-  // We conservatively report sshEnabled=true when Tailscale is online and no
-  // SSH-blocking health message is found. Callers should attempt a connection
-  // to confirm.
+  // We optimistically report sshEnabled=true when Tailscale is online and no
+  // SSH-blocking health message is found. This is optimistic because the code
+  // can only prove SSH is *blocked*, not that it's actively running. Callers
+  // should attempt a connection to confirm.
   const sshEnabled = !sshBlocked;
 
   return {

@@ -80,8 +80,7 @@ function renderTailscaleBlock(hosts: string, user: string): string {
     `Host ${hosts}`,
     "  ProxyCommand tailscale nc %h %p",
     `  User ${user}`,
-    "  StrictHostKeyChecking no",
-    "  UserKnownHostsFile /dev/null",
+    "  StrictHostKeyChecking accept-new",
     MUX_TAILSCALE_SSH_BLOCK_END,
   ].join("\n");
 }
@@ -94,10 +93,10 @@ function renderTailscaleBlock(hosts: string, user: string): string {
  * await ensureTailscaleSshConfig({ sshHost: "my-machine" });
  */
 export async function ensureTailscaleSshConfig(opts: TailscaleSshConfigOptions): Promise<void> {
-  const sshDir = path.join(os.homedir(), ".ssh");
-  const configPath = opts.sshConfigPath ?? path.join(sshDir, "config");
+  const configPath = opts.sshConfigPath ?? path.join(os.homedir(), ".ssh", "config");
+  const sshDir = path.dirname(configPath);
 
-  // Ensure ~/.ssh exists with restricted permissions
+  // Ensure the config parent directory exists with restricted permissions
   await fsPromises.mkdir(sshDir, { recursive: true, mode: 0o700 });
 
   const { content: existingContent, mode: existingMode } = await loadSSHConfigContent(configPath);

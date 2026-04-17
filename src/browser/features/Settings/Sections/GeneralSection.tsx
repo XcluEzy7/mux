@@ -201,8 +201,33 @@ export function GeneralSection() {
   // Tailscale SSH state (browser mode + experiment gate)
   const tailscaleSshExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
   const [tailscaleSshConfig, setTailscaleSshConfig] = useState<TailscaleSshConfig | null>(null);
+  const [tailscaleSshLoaded, setTailscaleSshLoaded] = useState(false);
   const [tailscaleInfo, setTailscaleInfo] = useState<TailscaleInfo | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const tailscaleSshConfigRef = useRef<TailscaleSshConfig | null>(null);
+  const tailscaleSshWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    tailscaleSshConfigRef.current = tailscaleSshConfig;
+  }, [tailscaleSshConfig]);
+
+  const persistTailscaleSsh = useCallback(
+    (next: TailscaleSshConfig | null) => {
+      tailscaleSshConfigRef.current = next;
+      setTailscaleSshConfig(next);
+      if (next) {
+        tailscaleSshWriteChainRef.current = tailscaleSshWriteChainRef.current
+          .catch(() => {
+            // Best-effort: previous write failed, continue chain.
+          })
+          .then(() => api?.server.setTailscaleSsh({ config: next }))
+          .catch(() => {
+            // Best-effort persistence — UI state is the source of truth.
+          });
+      }
+    },
+    [api]
+  );
   const [defaultProjectDir, setDefaultProjectDir] = useState("");
   const [cloneDirLoaded, setCloneDirLoaded] = useState(false);
   // Track whether the initial load succeeded to prevent saving empty string
@@ -394,24 +419,31 @@ export function GeneralSection() {
 
   // Load Tailscale SSH config from server on mount (browser mode + experiment only)
   useEffect(() => {
-    if (isBrowserMode && tailscaleSshExperimentEnabled && api) {
-      void api.server.getTailscaleSsh().then((config) => {
-        setTailscaleSshConfig(config);
-      });
+    if (!isBrowserMode || !tailscaleSshExperimentEnabled || !api) {
+      return;
     }
+    setTailscaleSshLoaded(false);
+    void api.server
+      .getTailscaleSsh()
+      .then((config) => {
+        setTailscaleSshConfig(config);
+      })
+      .finally(() => {
+        setTailscaleSshLoaded(true);
+      });
   }, [api, tailscaleSshExperimentEnabled]);
 
   const handleTailscaleSshToggle = useCallback(
     (enabled: boolean) => {
-      // Build a minimal config when enabling for the first time
+      // Build a minimal config when enabling for the first time.
+      // Default proxyCommand=true (ProxyCommand mode) to match the schema default.
       const next: TailscaleSshConfig = {
-        ...(tailscaleSshConfig ?? { sshHost: undefined, proxyCommand: false }),
+        ...(tailscaleSshConfig ?? { sshHost: undefined, proxyCommand: true }),
         enabled,
       };
-      setTailscaleSshConfig(next);
-      void api?.server.setTailscaleSsh({ config: next });
+      persistTailscaleSsh(next);
     },
-    [api, tailscaleSshConfig]
+    [tailscaleSshConfig, persistTailscaleSsh]
   );
 
   const handleTailscaleSshHostChange = useCallback(
@@ -419,11 +451,15 @@ export function GeneralSection() {
       if (!tailscaleSshConfig) {
         return;
       }
-      const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: value || undefined };
-      setTailscaleSshConfig(next);
-      void api?.server.setTailscaleSsh({ config: next });
+      // Trim to prevent whitespace-only hostnames from being persisted.
+      const normalizedHost = value.trim();
+      const next: TailscaleSshConfig = {
+        ...tailscaleSshConfig,
+        sshHost: normalizedHost || undefined,
+      };
+      persistTailscaleSsh(next);
     },
-    [api, tailscaleSshConfig]
+    [tailscaleSshConfig, persistTailscaleSsh]
   );
 
   const handleTailscaleProxyCommandChange = useCallback(
@@ -432,10 +468,9 @@ export function GeneralSection() {
         return;
       }
       const next: TailscaleSshConfig = { ...tailscaleSshConfig, proxyCommand };
-      setTailscaleSshConfig(next);
-      void api?.server.setTailscaleSsh({ config: next });
+      persistTailscaleSsh(next);
     },
-    [api, tailscaleSshConfig]
+    [tailscaleSshConfig, persistTailscaleSsh]
   );
 
   const handleDetectTailscale = useCallback(
@@ -447,18 +482,19 @@ export function GeneralSection() {
       try {
         const info = await api.server.detectTailscale({ force });
         setTailscaleInfo(info);
-        // Auto-fill sshHost from detected hostname/IP if not already set
-        if (tailscaleSshConfig && !tailscaleSshConfig.sshHost && (info.hostname ?? info.ip)) {
+        // Auto-fill sshHost from detected hostname/IP if not already set.
+        // Read from ref to avoid stale closure after await.
+        const currentConfig = tailscaleSshConfigRef.current;
+        if (currentConfig && !currentConfig.sshHost && (info.hostname ?? info.ip)) {
           const autoHost = info.hostname ?? info.ip ?? "";
-          const next: TailscaleSshConfig = { ...tailscaleSshConfig, sshHost: autoHost };
-          setTailscaleSshConfig(next);
-          void api.server.setTailscaleSsh({ config: next });
+          const next: TailscaleSshConfig = { ...currentConfig, sshHost: autoHost };
+          persistTailscaleSsh(next);
         }
       } finally {
         setDetecting(false);
       }
     },
-    [api, tailscaleSshConfig]
+    [api, persistTailscaleSsh]
   );
 
   useEffect(() => {
@@ -774,6 +810,7 @@ export function GeneralSection() {
             </div>
             <Switch
               checked={tailscaleSshConfig?.enabled ?? false}
+              disabled={!tailscaleSshLoaded}
               onCheckedChange={handleTailscaleSshToggle}
               aria-label="Enable Tailscale SSH"
             />

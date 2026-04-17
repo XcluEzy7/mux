@@ -221,9 +221,13 @@ export async function openInEditor(args: {
       // Check Tailscale SSH first (only if experiment is enabled)
       const experimentEnabled = isExperimentEnabled(EXPERIMENT_IDS.TAILSCALE_SSH);
       if (experimentEnabled) {
-        const tailscaleConfig = await args.api?.server.getTailscaleSsh();
-        if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
-          sshHost = tailscaleConfig.sshHost;
+        try {
+          const tailscaleConfig = await args.api?.server.getTailscaleSsh();
+          if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
+            sshHost = tailscaleConfig.sshHost;
+          }
+        } catch {
+          // Fall through to the standard SSH host resolution below.
         }
       }
       // Fall back to existing SSH host logic

@@ -25,13 +25,14 @@ export function generateTailscaleSshSnippet(
   }
 
   const hosts = [info.hostname, info.ip].filter(Boolean).join(" ");
-  const user = options.username ?? "$USER"; // Placeholder until user provides username
+  // Use %u token instead of $USER — OpenSSH expands %u in User directives but
+  // does not expand bare shell variables like $USER.
+  const user = options.username ?? "%u";
 
   return `Host ${hosts}
   ProxyCommand tailscale nc %h %p
   User ${user}
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null`;
+  StrictHostKeyChecking accept-new`;
 }
 
 /**

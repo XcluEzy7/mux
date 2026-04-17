@@ -37,8 +37,6 @@ Mux supports Tailscale SSH for remote editor connections. When running Mux as a 
 
 See the [Tailscale SSH documentation](docs/config/tailscale-ssh.mdx) for setup instructions.
 
-## Development
-
 Mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
 like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
