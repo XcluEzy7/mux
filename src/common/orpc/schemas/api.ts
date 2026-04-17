@@ -2345,6 +2345,17 @@ export const synthetic = {
     input: z.void(),
     output: ResultSchema(z.array(z.string()), z.string()),
   },
+  getQuota: {
+    input: z.void(),
+    output: ResultSchema(
+      z.object({
+        limit: z.number().nullable(),
+        requests: z.number().nullable(),
+        renewsAt: z.string().nullable(),
+      }),
+      z.string()
+    ),
+  },
 };
 export const ssh = {
   prompt: {

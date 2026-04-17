@@ -42,6 +42,8 @@ import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
+import { formatSyntheticRenewal, useSyntheticQuota } from "@/browser/hooks/useSyntheticQuota";
+
 import { useRouting } from "@/browser/hooks/useRouting";
 import { Button } from "@/browser/components/Button/Button";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
@@ -340,6 +342,13 @@ export function ProvidersSection() {
     isLoading: muxGatewayAccountLoading,
     refresh: refreshMuxGatewayAccountStatus,
   } = useMuxGatewayAccountStatus();
+
+  const {
+    data: syntheticQuota,
+    error: syntheticQuotaError,
+    isLoading: syntheticQuotaLoading,
+    refresh: refreshSyntheticQuota,
+  } = useSyntheticQuota();
 
   const routing = useRouting();
 
@@ -1076,6 +1085,18 @@ export function ProvidersSection() {
     muxGatewayIsLoggedIn,
     refreshMuxGatewayAccountStatus,
   ]);
+  useEffect(() => {
+    if (expandedProvider !== "synthetic-new") return;
+    // Only fetch if not already loaded/loading/errored
+    if (syntheticQuota || syntheticQuotaLoading || syntheticQuotaError) return;
+    void refreshSyntheticQuota();
+  }, [
+    expandedProvider,
+    syntheticQuota,
+    syntheticQuotaLoading,
+    syntheticQuotaError,
+    refreshSyntheticQuota,
+  ]);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
@@ -1594,26 +1615,92 @@ export function ProvidersSection() {
                       )}
 
                       {provider === "synthetic-new" && (
-                        <div className="border-border-light space-y-2 border-t pt-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <label className="text-foreground block text-xs font-medium">
-                                Available Models
-                              </label>
-                              {syntheticModelsStatus && (
-                                <span className="text-muted text-xs">{syntheticModelsStatus}</span>
+                        <>
+                          <div className="border-border-light space-y-2 border-t pt-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <label className="text-foreground block text-xs font-medium">
+                                  Available Models
+                                </label>
+                                {syntheticModelsStatus && (
+                                  <span className="text-muted text-xs">
+                                    {syntheticModelsStatus}
+                                  </span>
+                                )}
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void refreshSyntheticModels()}
+                                disabled={syntheticModelsLoading}
+                              >
+                                {syntheticModelsLoading ? "Refreshing..." : "Refresh Models"}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {isConfigured("synthetic-new") && (
+                            <div className="border-border-light space-y-2 border-t pt-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <label className="text-foreground block text-xs font-medium">
+                                    Quota
+                                  </label>
+                                  <span className="text-muted text-xs">
+                                    Usage and limits from Synthetic
+                                  </span>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    void refreshSyntheticQuota();
+                                  }}
+                                  disabled={syntheticQuotaLoading}
+                                >
+                                  {syntheticQuotaLoading ? "Refreshing..." : "Refresh"}
+                                </Button>
+                              </div>
+
+                              {syntheticQuota?.limit !== null &&
+                              syntheticQuota?.limit !== undefined ? (
+                                <>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted text-xs">Requests</span>
+                                    <span className="text-foreground font-mono text-xs">
+                                      {syntheticQuota.requests ?? "—"}/{syntheticQuota.limit}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted text-xs">Remaining</span>
+                                    <span className="text-foreground font-mono text-xs">
+                                      {syntheticQuota.limit - (syntheticQuota.requests ?? 0)}
+                                    </span>
+                                  </div>
+                                  {syntheticQuota.renewsAt && (
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-muted text-xs">Resets</span>
+                                      <span className="text-foreground text-xs">
+                                        {formatSyntheticRenewal(syntheticQuota.renewsAt)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : syntheticQuota ? (
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Plan</span>
+                                  <span className="text-foreground text-xs">
+                                    Pay-as-you-go · no message limit
+                                  </span>
+                                </div>
+                              ) : null}
+
+                              {syntheticQuotaError && (
+                                <p className="text-destructive text-xs">{syntheticQuotaError}</p>
                               )}
                             </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void refreshSyntheticModels()}
-                              disabled={syntheticModelsLoading}
-                            >
-                              {syntheticModelsLoading ? "Refreshing..." : "Refresh Models"}
-                            </Button>
-                          </div>
-                        </div>
+                          )}
+                        </>
                       )}
                       {fields.map((fieldConfig) => {
                         const isEditing =

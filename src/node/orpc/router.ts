@@ -5063,6 +5063,75 @@ export const router = (authToken?: string) => {
           context.providerService.setModels("synthetic-new", modelIds);
           return Ok(modelIds);
         }),
+      getQuota: t
+        .input(schemas.synthetic.getQuota.input)
+        .output(schemas.synthetic.getQuota.output)
+        .handler(async ({ context }) => {
+          const providersConfig = context.config.loadProvidersConfig() ?? {};
+          const syntheticConfig = (providersConfig["synthetic-new"] ?? {}) as Record<
+            string,
+            unknown
+          >;
+          const creds = resolveProviderCredentials("synthetic-new", syntheticConfig);
+
+          if (!creds.isConfigured || !creds.apiKey) {
+            return Err("Synthetic provider is not configured — set an API key first");
+          }
+
+          const baseUrl = creds.baseUrl ?? "https://api.synthetic.new";
+
+          let response: Response;
+          try {
+            response = await fetch(`${baseUrl}/v2/quotas`, {
+              headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${creds.apiKey}`,
+              },
+            });
+          } catch (error) {
+            return Err(`Synthetic quota fetch failed: ${getErrorMessage(error)}`);
+          }
+
+          if (response.status === 401) {
+            return Err("Synthetic API key is invalid — check your credentials");
+          }
+          if (!response.ok) {
+            let body = "";
+            try {
+              body = await response.text();
+            } catch {
+              /* ignore */
+            }
+            return Err(
+              `Synthetic quota fetch failed (HTTP ${response.status}): ${body.trim().slice(0, 200)}`
+            );
+          }
+
+          let json: unknown;
+          try {
+            json = await response.json();
+          } catch (error) {
+            return Err(`Synthetic quota response was not valid JSON: ${getErrorMessage(error)}`);
+          }
+
+          // subscription may be absent/null for pay-as-you-go users
+          const payload = json as { subscription?: unknown };
+          const sub = payload.subscription as
+            | { limit?: unknown; requests?: unknown; renewsAt?: unknown }
+            | null
+            | undefined;
+
+          if (!sub || typeof sub !== "object") {
+            // Pay-as-you-go: no subscription
+            return Ok({ limit: null, requests: null, renewsAt: null });
+          }
+
+          const limit = typeof sub.limit === "number" ? sub.limit : null;
+          const requests = typeof sub.requests === "number" ? sub.requests : null;
+          const renewsAt = typeof sub.renewsAt === "string" ? sub.renewsAt : null;
+
+          return Ok({ limit, requests, renewsAt });
+        }),
     },
     ssh: {
       prompt: {
