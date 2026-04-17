@@ -447,6 +447,34 @@ export const router = (authToken?: string) => {
             serverSshHost: input.sshHost ?? undefined,
           }));
         }),
+      getTailscaleSsh: t
+        .input(schemas.server.getTailscaleSsh.input)
+        .output(schemas.server.getTailscaleSsh.output)
+        .handler(({ context }) => {
+          return context.config.loadConfigOrDefault().tailscaleSsh ?? null;
+        }),
+      setTailscaleSsh: t
+        .input(schemas.server.setTailscaleSsh.input)
+        .output(schemas.server.setTailscaleSsh.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => ({
+            ...config,
+            tailscaleSsh: input.config ?? undefined,
+          }));
+        }),
+      detectTailscale: t
+        .input(schemas.server.detectTailscale.input)
+        .output(schemas.server.detectTailscale.output)
+        .handler(() => {
+          // Placeholder: actual detection implemented in Phase 2
+          return {
+            available: false,
+            ip: null,
+            hostname: null,
+            sshEnabled: false,
+            tailnet: null,
+          };
+        }),
       getApiServerStatus: t
         .input(schemas.server.getApiServerStatus.input)
         .output(schemas.server.getApiServerStatus.output)

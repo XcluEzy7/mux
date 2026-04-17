@@ -20,6 +20,7 @@ export const EXPERIMENT_IDS = {
   REMOTE_OAUTH_VISIBLE_URL: "remote-oauth-visible-url",
   REMOTE_OAUTH_MANUAL_CALLBACK: "remote-oauth-manual-callback",
   REMOTE_OAUTH_BROWSER_FLOW: "remote-oauth-browser-flow",
+  TAILSCALE_SSH: "tailscale-ssh",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -167,6 +168,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Show the 'Connect (Browser)' button for ChatGPT OAuth even on remote servers — the authorize URL will be shown as visible text for copying to another device",
     enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.TAILSCALE_SSH]: {
+    id: EXPERIMENT_IDS.TAILSCALE_SSH,
+    name: "Tailscale SSH",
+    description:
+      "Enable Tailscale SSH integration for remote editor connections. Detects Tailscale on the server and configures editor deep links to use Tailscale hostnames. Disable if you don't use Tailscale or want manual SSH host control.",
+    enabledByDefault: true,
     userOverridable: true,
     showInSettings: true,
   },

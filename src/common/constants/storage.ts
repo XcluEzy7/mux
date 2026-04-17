@@ -116,6 +116,11 @@ export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
 export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
 
 /**
+ * Storage key for Tailscale SSH configuration (shared via ~/.mux/config.json).
+ */
+export const TAILSCALE_SSH_CONFIG_KEY = "tailscaleSshConfig";
+
+/**
  * Get the localStorage key for cached MCP server test results (per project)
  * Format: "mcpTestResults:{projectPath}"
  * Stores: Record<serverName, CachedMCPTestResult>
