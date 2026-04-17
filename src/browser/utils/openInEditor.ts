@@ -1,4 +1,5 @@
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import {
   getEditorDeepLink,
   getDockerDeepLink,
@@ -11,6 +12,7 @@ import {
   EDITOR_CONFIG_KEY,
   type EditorConfig,
 } from "@/common/constants/storage";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import type { APIClient } from "@/browser/contexts/API";
@@ -216,9 +218,19 @@ export async function openInEditor(args: {
         sshHost = sshHost + ":" + args.runtimeConfig.port;
       }
     } else if (isBrowserMode && !isLocalhost(window.location.hostname)) {
-      // Remote server + local workspace: need SSH to reach server's files
-      const serverSshHost = await args.api?.server.getSshHost();
-      sshHost = serverSshHost ?? window.location.hostname;
+      // Check Tailscale SSH first (only if experiment is enabled)
+      const experimentEnabled = isExperimentEnabled(EXPERIMENT_IDS.TAILSCALE_SSH);
+      if (experimentEnabled) {
+        const tailscaleConfig = await args.api?.server.getTailscaleSsh();
+        if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
+          sshHost = tailscaleConfig.sshHost;
+        }
+      }
+      // Fall back to existing SSH host logic
+      if (!sshHost) {
+        const serverSshHost = await args.api?.server.getSshHost();
+        sshHost = serverSshHost ?? window.location.hostname;
+      }
     }
     // else: localhost access to local workspace → no SSH needed
 
