@@ -1787,10 +1787,13 @@ export class ProviderModelFactory {
             config: Record<string, unknown>
           ) => (modelId: string) => LanguageModel;
         };
+        // Extract headers from providerConfig (already includes app attribution headers)
+        const { headers } = providerConfig;
         const provider = providerModule.createOpenAICompatible({
           name: "synthetic-new",
           baseURL,
           apiKey: resolvedApiKey,
+          headers,
           fetch: providerFetch,
         });
         return Ok(provider(modelId));
