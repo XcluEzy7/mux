@@ -30,6 +30,12 @@ import {
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
 import {
+  formatSyntheticQuota,
+  formatSyntheticRenewal,
+  useSyntheticQuota,
+} from "@/browser/hooks/useSyntheticQuota";
+
+import {
   isDesktopMode,
   getTitlebarLeftInset,
   DESKTOP_TITLEBAR_HEIGHT_CLASS,
@@ -116,6 +122,12 @@ export function TitleBar(props: TitleBarProps) {
     error: muxGatewayAccountError,
     refresh: refreshMuxGatewayAccountStatus,
   } = useMuxGatewayAccountStatus();
+  const isSyntheticRoute = activeRouteProvider === "synthetic-new";
+  const {
+    data: syntheticQuota,
+    error: syntheticQuotaError,
+    refresh: refreshSyntheticQuota,
+  } = useSyntheticQuota();
 
   const gitDescribe = getGitDescribe(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
@@ -246,6 +258,9 @@ export function TitleBar(props: TitleBarProps) {
                   if (isMuxGatewayRoute) {
                     void refreshMuxGatewayAccountStatus();
                   }
+                  if (isSyntheticRoute) {
+                    void refreshSyntheticQuota();
+                  }
                 }}
                 className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-opacity hover:opacity-70"
                 aria-label={`${activeRoute.displayName} routing`}
@@ -257,7 +272,10 @@ export function TitleBar(props: TitleBarProps) {
                 )}
               </button>
             </TooltipTrigger>
-            <TooltipContent align="end" className={cn(isMuxGatewayRoute ? "w-56" : "w-64")}>
+            <TooltipContent
+              align="end"
+              className={cn(isMuxGatewayRoute || isSyntheticRoute ? "w-56" : "w-64")}
+            >
               <div className="text-foreground text-[11px] font-medium">
                 {activeRoute.displayName}
               </div>
@@ -283,13 +301,44 @@ export function TitleBar(props: TitleBarProps) {
                     </div>
                   )}
                 </>
+              ) : isSyntheticRoute ? (
+                <>
+                  <div className="mt-1.5 space-y-0.5 text-[11px]">
+                    {syntheticQuota?.limit !== null && syntheticQuota?.limit !== undefined ? (
+                      <>
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-muted">Requests</span>
+                          <span className="text-foreground font-mono">
+                            {formatSyntheticQuota(syntheticQuota)}
+                          </span>
+                        </div>
+                        {syntheticQuota?.renewsAt && (
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-muted">Resets</span>
+                            <span className="text-foreground">
+                              {formatSyntheticRenewal(syntheticQuota.renewsAt)}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    ) : syntheticQuota ? (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-muted">Plan</span>
+                        <span className="text-foreground">Pay-as-you-go</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  {syntheticQuotaError && (
+                    <div className="text-destructive mt-1.5 text-[10px]">{syntheticQuotaError}</div>
+                  )}
+                </>
               ) : (
                 <div className="text-muted mt-1.5 text-[11px]">
                   Requests for this model route via {activeRoute.displayName}.
                 </div>
               )}
               <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
-                {isMuxGatewayRoute
+                {isMuxGatewayRoute || isSyntheticRoute
                   ? "Click to open gateway settings"
                   : "Click to open provider settings"}
               </div>

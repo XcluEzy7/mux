@@ -23,7 +23,8 @@ export type ProviderName =
   | "openrouter"
   | "github-copilot"
   | "bedrock"
-  | "ollama";
+  | "ollama"
+  | "synthetic-new";
 
 interface ProviderDefinition {
   /** Display name for UI (proper casing) */
@@ -79,6 +80,30 @@ const fromDotSeparatedGatewayModelId = (
   };
 };
 
+const SYNTHETIC_ORIGIN_MAP: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  google: "google",
+  xai: "xai",
+  deepseek: "deepseek-ai",
+};
+
+const toSyntheticGatewayModelId = (origin: string, modelId: string): string => {
+  const org = SYNTHETIC_ORIGIN_MAP[origin] ?? origin;
+  return `hf:${org}/${modelId}`;
+};
+
+const fromSyntheticGatewayModelId = (
+  gatewayModelId: string
+): { origin: string; modelId: string } | null => {
+  const withoutPrefix = gatewayModelId.startsWith("hf:") ? gatewayModelId.slice(3) : gatewayModelId;
+  const sep = withoutPrefix.indexOf("/");
+  if (sep === -1) return null;
+  const org = withoutPrefix.slice(0, sep);
+  const modelId = withoutPrefix.slice(sep + 1);
+  const origin = Object.entries(SYNTHETIC_ORIGIN_MAP).find(([, v]) => v === org)?.[0] ?? org;
+  return { origin, modelId };
+};
 // Order determines display order in UI (Settings, model selectors, etc.)
 export const PROVIDER_DEFINITIONS = {
   "mux-gateway": {
@@ -170,6 +195,17 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOllama",
     requiresApiKey: false, // Local service
     kind: "local",
+  },
+  "synthetic-new": {
+    displayName: "Synthetic",
+    import: () => import("@ai-sdk/openai-compatible"),
+    factoryName: "createOpenAICompatible",
+    requiresApiKey: true,
+    kind: "gateway",
+    routes: ["anthropic", "openai", "google", "xai", "deepseek"],
+    passthrough: false,
+    toGatewayModelId: toSyntheticGatewayModelId,
+    fromGatewayModelId: fromSyntheticGatewayModelId,
   },
 } as const satisfies Record<ProviderName, ProviderDefinition>;
 

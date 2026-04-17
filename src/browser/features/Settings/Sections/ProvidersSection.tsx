@@ -42,6 +42,8 @@ import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
+import { formatSyntheticRenewal, useSyntheticQuota } from "@/browser/hooks/useSyntheticQuota";
+
 import { useRouting } from "@/browser/hooks/useRouting";
 import { Button } from "@/browser/components/Button/Button";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
@@ -65,6 +67,9 @@ import {
   TooltipTrigger,
 } from "@/browser/components/Tooltip/Tooltip";
 import { getErrorMessage } from "@/common/utils/errors";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { copyToClipboard } from "@/browser/utils/clipboard";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -313,12 +318,40 @@ export function ProvidersSection() {
 
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
+
+  // Synthetic.new model refresh state
+  const [syntheticModelsLoading, setSyntheticModelsLoading] = useState(false);
+  const [syntheticModelsStatus, setSyntheticModelsStatus] = useState<string | null>(null);
+
+  const refreshSyntheticModels = useCallback(async () => {
+    setSyntheticModelsLoading(true);
+    setSyntheticModelsStatus(null);
+    try {
+      const result = await api!.synthetic.refreshModels();
+      if (result.success) {
+        setSyntheticModelsStatus(`${result.data.length} models available`);
+      } else {
+        setSyntheticModelsStatus(result.error);
+      }
+    } catch {
+      setSyntheticModelsStatus("Failed to refresh models");
+    } finally {
+      setSyntheticModelsLoading(false);
+    }
+  }, [api]);
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
     isLoading: muxGatewayAccountLoading,
     refresh: refreshMuxGatewayAccountStatus,
   } = useMuxGatewayAccountStatus();
+
+  const {
+    data: syntheticQuota,
+    error: syntheticQuotaError,
+    isLoading: syntheticQuotaLoading,
+    refresh: refreshSyntheticQuota,
+  } = useSyntheticQuota();
 
   const routing = useRouting();
 
@@ -395,6 +428,13 @@ export function ProvidersSection() {
 
   const codexOauthLoginInProgress =
     codexOauthStatus === "starting" || codexOauthStatus === "waiting";
+  // Separate flag for manual callback submission — codexOauthLoginInProgress is true during
+  // the entire "waiting" flow, so using it to disable the submit button would make it permanently unclickable.
+  const [codexManualCallbackSubmitting, setCodexManualCallbackSubmitting] = useState(false);
+  // Experiment flags for remote OAuth features
+  const visibleUrlEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_VISIBLE_URL);
+  const manualCallbackEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_MANUAL_CALLBACK);
+  const browserFlowOnRemoteEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_OAUTH_BROWSER_FLOW);
 
   const startCodexOauthBrowserConnect = async () => {
     const attempt = ++codexOauthAttemptRef.current;
@@ -478,7 +518,15 @@ export function ProvidersSection() {
 
       if (!startResult.success) {
         setCodexOauthStatus("error");
-        setCodexOauthError(startResult.error);
+        // Check for port-in-use error and suggest manual callback as fallback
+        const errorMessage = getErrorMessage(startResult.error);
+        if (errorMessage.includes("EADDRINUSE") || errorMessage.includes("port")) {
+          setCodexOauthError(
+            `Port 1455 is in use. Try the "Paste Callback URL" option below, or close other apps using this port.`
+          );
+        } else {
+          setCodexOauthError(errorMessage);
+        }
         return;
       }
 
@@ -1055,6 +1103,21 @@ export function ProvidersSection() {
     muxGatewayIsLoggedIn,
     refreshMuxGatewayAccountStatus,
   ]);
+  useEffect(() => {
+    if (expandedProvider !== "synthetic-new") return;
+    // Only fetch if the provider is actually configured
+    if (!config?.["synthetic-new"]?.isConfigured) return;
+    // Only fetch if not already loaded/loading/errored
+    if (syntheticQuota || syntheticQuotaLoading || syntheticQuotaError) return;
+    void refreshSyntheticQuota();
+  }, [
+    expandedProvider,
+    config?.["synthetic-new"]?.isConfigured,
+    syntheticQuota,
+    syntheticQuotaLoading,
+    syntheticQuotaError,
+    refreshSyntheticQuota,
+  ]);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
@@ -1572,6 +1635,94 @@ export function ProvidersSection() {
                         </div>
                       )}
 
+                      {provider === "synthetic-new" && (
+                        <>
+                          <div className="border-border-light space-y-2 border-t pt-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <label className="text-foreground block text-xs font-medium">
+                                  Available Models
+                                </label>
+                                {syntheticModelsStatus && (
+                                  <span className="text-muted text-xs">
+                                    {syntheticModelsStatus}
+                                  </span>
+                                )}
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void refreshSyntheticModels()}
+                                disabled={syntheticModelsLoading}
+                              >
+                                {syntheticModelsLoading ? "Refreshing..." : "Refresh Models"}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {isConfigured("synthetic-new") && (
+                            <div className="border-border-light space-y-2 border-t pt-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <label className="text-foreground block text-xs font-medium">
+                                    Quota
+                                  </label>
+                                  <span className="text-muted text-xs">
+                                    Usage and limits from Synthetic
+                                  </span>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    void refreshSyntheticQuota();
+                                  }}
+                                  disabled={syntheticQuotaLoading}
+                                >
+                                  {syntheticQuotaLoading ? "Refreshing..." : "Refresh"}
+                                </Button>
+                              </div>
+
+                              {syntheticQuota?.limit !== null &&
+                              syntheticQuota?.limit !== undefined ? (
+                                <>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted text-xs">Requests</span>
+                                    <span className="text-foreground font-mono text-xs">
+                                      {syntheticQuota.requests ?? "—"}/{syntheticQuota.limit}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted text-xs">Remaining</span>
+                                    <span className="text-foreground font-mono text-xs">
+                                      {syntheticQuota.limit - (syntheticQuota.requests ?? 0)}
+                                    </span>
+                                  </div>
+                                  {syntheticQuota.renewsAt && (
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-muted text-xs">Resets</span>
+                                      <span className="text-foreground text-xs">
+                                        {formatSyntheticRenewal(syntheticQuota.renewsAt)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : syntheticQuota ? (
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Plan</span>
+                                  <span className="text-foreground text-xs">
+                                    Pay-as-you-go · no message limit
+                                  </span>
+                                </div>
+                              ) : null}
+
+                              {syntheticQuotaError && (
+                                <p className="text-destructive text-xs">{syntheticQuotaError}</p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
                       {fields.map((fieldConfig) => {
                         const isEditing =
                           editingField?.provider === provider &&
@@ -1876,7 +2027,8 @@ export function ProvidersSection() {
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {!isRemoteServer && (
+                            {/* Connect (Browser) button - gated on browserFlowOnRemoteEnabled for remote servers */}
+                            {(!isRemoteServer || browserFlowOnRemoteEnabled) && (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -1898,20 +2050,36 @@ export function ProvidersSection() {
                               Connect (Device)
                             </Button>
 
+                            {/* Visible URL panel - shown when experiment is enabled or on remote server */}
                             {codexOauthStatus === "waiting" &&
                               !codexOauthDeviceFlow &&
-                              codexOauthAuthorizeUrl && (
-                                <Button
-                                  size="sm"
-                                  aria-label="Copy and open OpenAI authorization page"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
-                                    window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
-                                  }}
-                                  className="h-8 px-3 text-xs"
-                                >
-                                  Copy & Open OpenAI
-                                </Button>
+                              codexOauthAuthorizeUrl &&
+                              (visibleUrlEnabled || isRemoteServer) && (
+                                <div className="flex flex-col gap-2">
+                                  <label className="text-muted text-xs">
+                                    Open this URL in your browser:
+                                  </label>
+                                  <code
+                                    className="bg-background-tertiary text-foreground cursor-text rounded border px-3 py-2 text-xs select-text"
+                                    onClick={() => {
+                                      void copyToClipboard(codexOauthAuthorizeUrl);
+                                    }}
+                                    title="Click to copy"
+                                  >
+                                    {codexOauthAuthorizeUrl}
+                                  </code>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => {
+                                      void copyToClipboard(codexOauthAuthorizeUrl);
+                                      window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                                    }}
+                                    className="h-8 px-3 text-xs"
+                                  >
+                                    Copy & Open OpenAI
+                                  </Button>
+                                </div>
                               )}
 
                             {codexOauthLoginInProgress && (
@@ -1947,9 +2115,7 @@ export function ProvidersSection() {
                                   size="sm"
                                   aria-label="Copy and open OpenAI verification page"
                                   onClick={() => {
-                                    void navigator.clipboard.writeText(
-                                      codexOauthDeviceFlow.userCode
-                                    );
+                                    void copyToClipboard(codexOauthDeviceFlow.userCode);
                                     window.open(
                                       codexOauthDeviceFlow.verifyUrl,
                                       "_blank",
@@ -1977,6 +2143,65 @@ export function ProvidersSection() {
 
                           {codexOauthStatus === "error" && codexOauthError && (
                             <p className="text-destructive text-xs">{codexOauthError}</p>
+                          )}
+                          {/* Manual callback paste section - gated on manualCallbackEnabled experiment */}
+                          {manualCallbackEnabled && codexOauthDesktopFlowId && (
+                            <details className="border-border-light space-y-2 rounded border p-3">
+                              <summary className="text-foreground cursor-pointer text-xs font-medium">
+                                Paste Callback URL (Advanced)
+                              </summary>
+                              <div className="space-y-2">
+                                <p className="text-muted text-xs">
+                                  After authorizing in your browser, paste the callback URL below to
+                                  complete sign-in.
+                                </p>
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    const form = e.currentTarget;
+                                    const formData = new FormData(form);
+                                    const callbackUrl = formData.get("callbackUrl") as string;
+                                    if (!callbackUrl || !api) return;
+
+                                    setCodexManualCallbackSubmitting(true);
+                                    void api.codexOauth
+                                      .completeDesktopFlowManually({
+                                        flowId: codexOauthDesktopFlowId,
+                                        callbackUrl,
+                                      })
+                                      .then((result) => {
+                                        if (!result.success) {
+                                          setCodexOauthStatus("error");
+                                          setCodexOauthError(result.error);
+                                        } else {
+                                          setCodexOauthStatus("idle");
+                                          setCodexOauthDesktopFlowId(null);
+                                          void refresh();
+                                        }
+                                      })
+                                      .finally(() => {
+                                        setCodexManualCallbackSubmitting(false);
+                                      });
+                                  }}
+                                  className="flex flex-col gap-2"
+                                >
+                                  <input
+                                    type="text"
+                                    name="callbackUrl"
+                                    placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                                    className="bg-background text-foreground border-border-light rounded border px-3 py-2 font-mono text-xs"
+                                    required
+                                  />
+                                  <Button
+                                    type="submit"
+                                    size="sm"
+                                    disabled={codexManualCallbackSubmitting}
+                                  >
+                                    Complete Sign-In
+                                  </Button>
+                                </form>
+                              </div>
+                            </details>
                           )}
 
                           <div className="border-border-light space-y-2 border-t pt-3">

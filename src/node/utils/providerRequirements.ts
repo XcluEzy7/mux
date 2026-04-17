@@ -63,6 +63,10 @@ export const PROVIDER_ENV_VARS: Partial<
   "github-copilot": {
     apiKey: ["GITHUB_COPILOT_TOKEN"],
   },
+  "synthetic-new": {
+    apiKey: ["SYNTHETIC_NEW_API_KEY"],
+    baseUrl: ["SYNTHETIC_NEW_BASE_URL"],
+  },
   bedrock: {
     region: ["AWS_REGION", "AWS_DEFAULT_REGION"],
   },
