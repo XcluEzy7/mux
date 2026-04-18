@@ -530,6 +530,7 @@ export class WorkspaceStore {
   // change outside the app. We only auto-refresh once per opened workspace; manual
   // refresh in Settings remains the fallback when credentials/catalogs change mid-session.
   private refreshedOllamaWorkspaceIds = new Set<string>();
+  private refreshingOllamaWorkspaceIds = new Set<string>();
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -1119,25 +1120,45 @@ export class WorkspaceStore {
     client: RouterClient<AppRouter>,
     workspaceId: string
   ): Promise<void> {
-    if (this.refreshedOllamaWorkspaceIds.has(workspaceId)) {
+    if (
+      this.refreshedOllamaWorkspaceIds.has(workspaceId) ||
+      this.refreshingOllamaWorkspaceIds.has(workspaceId)
+    ) {
       return;
     }
 
+    this.refreshingOllamaWorkspaceIds.add(workspaceId);
+
     try {
       const providersConfig = await client.providers.getConfig();
-      this.refreshedOllamaWorkspaceIds.add(workspaceId);
 
       const refreshes: Array<Promise<unknown>> = [];
-      if (providersConfig.ollama?.isConfigured === true) {
+      if (
+        providersConfig.ollama?.isConfigured === true &&
+        providersConfig.ollama?.isEnabled !== false
+      ) {
         refreshes.push(client.ollama.refreshModels());
       }
-      if (providersConfig["ollama-cloud"]?.isConfigured === true) {
+      if (
+        providersConfig["ollama-cloud"]?.isConfigured === true &&
+        providersConfig["ollama-cloud"]?.isEnabled !== false
+      ) {
         refreshes.push(client.ollamaCloud.refreshModels());
       }
 
-      await Promise.allSettled(refreshes);
+      if (refreshes.length === 0) {
+        this.refreshedOllamaWorkspaceIds.add(workspaceId);
+        return;
+      }
+
+      const results = await Promise.allSettled(refreshes);
+      if (results.every((result) => result.status === "fulfilled")) {
+        this.refreshedOllamaWorkspaceIds.add(workspaceId);
+      }
     } catch {
       // Best-effort only. Manual refresh in Settings remains the fallback.
+    } finally {
+      this.refreshingOllamaWorkspaceIds.delete(workspaceId);
     }
   }
 

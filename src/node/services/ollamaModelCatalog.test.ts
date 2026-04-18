@@ -7,8 +7,10 @@ import { ProviderService } from "@/node/services/providerService";
 import {
   normalizeOllamaApiBaseUrl,
   refreshOllamaProviderCatalog,
+  refreshConfiguredOllamaCatalogs,
   OLLAMA_CLOUD_DEFAULT_BASE_URL,
   OLLAMA_LOCAL_DEFAULT_BASE_URL,
+  OLLAMA_SHOW_DETAILS_CONCURRENCY_LIMIT,
 } from "./ollamaModelCatalog";
 
 async function withTempConfig(
@@ -181,6 +183,130 @@ describe("refreshOllamaProviderCatalog", () => {
         { id: "keep-mapping", mappedToModel: "openai:gpt-5.4" },
         { id: "new-cloud", contextWindowTokens: 32768 },
       ]);
+    });
+  });
+
+  it("allows empty cloud catalogs and clears stale authoritative entries", async () => {
+    await withTempConfig(async (config, providerService) => {
+      config.saveProvidersConfig({
+        "ollama-cloud": {
+          apiKey: "ollama_test_key",
+          models: ["stale-cloud"],
+        },
+      });
+
+      setFetchImplementation((input) => {
+        const url = getRequestUrl(input);
+        if (url === `${OLLAMA_CLOUD_DEFAULT_BASE_URL}/tags`) {
+          return Promise.resolve(jsonResponse({ models: [] }));
+        }
+
+        throw new Error(`Unexpected request for ${url}`);
+      });
+
+      const result = await refreshOllamaProviderCatalog({
+        provider: "ollama-cloud",
+        config,
+        providerService,
+      });
+
+      expect(result.modelIds).toEqual([]);
+      expect(config.loadProvidersConfig()?.["ollama-cloud"]?.models).toEqual([]);
+    });
+  });
+
+  it("caps concurrent Ollama show requests", async () => {
+    await withTempConfig(async (config, providerService) => {
+      config.saveProvidersConfig({
+        ollama: {
+          models: ["seed"],
+        },
+      });
+
+      let activeShowRequests = 0;
+      let maxActiveShowRequests = 0;
+
+      setFetchImplementation((input, init) => {
+        const url = getRequestUrl(input);
+        if (url === `${OLLAMA_LOCAL_DEFAULT_BASE_URL}/tags`) {
+          return Promise.resolve(
+            jsonResponse({
+              models: Array.from({ length: 8 }, (_, index) => ({ name: `model-${index}` })),
+            })
+          );
+        }
+
+        if (url === `${OLLAMA_LOCAL_DEFAULT_BASE_URL}/show`) {
+          const body = parseShowBody(init);
+          activeShowRequests += 1;
+          maxActiveShowRequests = Math.max(maxActiveShowRequests, activeShowRequests);
+
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              activeShowRequests -= 1;
+              resolve(jsonResponse({ details: { context_length: 4096 }, name: body.model }));
+            }, 5);
+          });
+        }
+
+        throw new Error(`Unexpected request for ${url}`);
+      });
+
+      await refreshOllamaProviderCatalog({
+        provider: "ollama",
+        config,
+        providerService,
+      });
+
+      expect(maxActiveShowRequests).toBeLessThanOrEqual(OLLAMA_SHOW_DETAILS_CONCURRENCY_LIMIT);
+    });
+  });
+});
+
+describe("refreshConfiguredOllamaCatalogs", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("skips disabled providers during startup refresh", async () => {
+    await withTempConfig(async (config, providerService) => {
+      config.saveProvidersConfig({
+        ollama: {
+          enabled: false,
+          models: ["local-disabled"],
+        },
+        "ollama-cloud": {
+          apiKey: "ollama_test_key",
+          models: ["cloud-enabled"],
+        },
+      });
+
+      let tagRequests = 0;
+      setFetchImplementation((input, init) => {
+        const url = getRequestUrl(input);
+        if (url === `${OLLAMA_CLOUD_DEFAULT_BASE_URL}/tags`) {
+          tagRequests += 1;
+          return Promise.resolve(jsonResponse({ models: [{ name: "cloud-enabled" }] }));
+        }
+
+        if (url === `${OLLAMA_CLOUD_DEFAULT_BASE_URL}/show`) {
+          const body = parseShowBody(init);
+          return Promise.resolve(jsonResponse({ details: { context_length: 4096 }, name: body.model }));
+        }
+
+        if (url === `${OLLAMA_LOCAL_DEFAULT_BASE_URL}/tags`) {
+          throw new Error("Disabled local Ollama provider should not refresh at startup");
+        }
+
+        throw new Error(`Unexpected request for ${url}`);
+      });
+
+      await refreshConfiguredOllamaCatalogs({
+        config,
+        providerService,
+      });
+
+      expect(tagRequests).toBe(1);
     });
   });
 });

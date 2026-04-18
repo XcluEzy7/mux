@@ -182,6 +182,55 @@ it("rejects Ollama Cloud models missing from the authoritative catalog", async (
   });
 });
 
+it("prefers cloud-specific Ollama env vars for auth and base URL", async () => {
+  await withTempConfig(async (config, factory) => {
+    const originalRegistry = PROVIDER_REGISTRY["ollama-cloud"];
+    const originalCloudApiKey = process.env.OLLAMA_CLOUD_API_KEY;
+    const originalFallbackApiKey = process.env.OLLAMA_API_KEY;
+    const originalCloudBaseUrl = process.env.OLLAMA_CLOUD_BASE_URL;
+    const originalFallbackBaseUrl = process.env.OLLAMA_BASE_URL;
+    let capturedOptions: Record<string, unknown> | undefined;
+
+    process.env.OLLAMA_CLOUD_API_KEY = "cloud-key";
+    process.env.OLLAMA_API_KEY = "fallback-key";
+    process.env.OLLAMA_CLOUD_BASE_URL = "https://cloud.example";
+    process.env.OLLAMA_BASE_URL = "https://generic.example";
+
+    config.saveProvidersConfig({
+      "ollama-cloud": {
+        models: ["gpt-oss:20b"],
+      },
+    });
+
+    PROVIDER_REGISTRY["ollama-cloud"] = async () => {
+      const module = await originalRegistry();
+      return {
+        ...module,
+        createOllama: (options) => {
+          capturedOptions = options as Record<string, unknown>;
+          return module.createOllama(options);
+        },
+      };
+    };
+
+    try {
+      const result = await factory.createModel("ollama-cloud:gpt-oss:20b");
+
+      expect(result.success).toBe(true);
+      expect(capturedOptions?.baseURL).toBe("https://cloud.example/api");
+      expect((capturedOptions?.headers as Record<string, string> | undefined)?.Authorization).toBe(
+        "Bearer cloud-key"
+      );
+    } finally {
+      PROVIDER_REGISTRY["ollama-cloud"] = originalRegistry;
+      process.env.OLLAMA_CLOUD_API_KEY = originalCloudApiKey;
+      process.env.OLLAMA_API_KEY = originalFallbackApiKey;
+      process.env.OLLAMA_CLOUD_BASE_URL = originalCloudBaseUrl;
+      process.env.OLLAMA_BASE_URL = originalFallbackBaseUrl;
+    }
+  });
+});
+
 describe("ProviderModelFactory GitHub Copilot", () => {
   it("creates routed gpt-5.4 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {

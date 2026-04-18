@@ -68,8 +68,8 @@ export const PROVIDER_ENV_VARS: Partial<
     baseUrl: ["SYNTHETIC_NEW_BASE_URL"],
   },
   "ollama-cloud": {
-    apiKey: ["OLLAMA_API_KEY", "OLLAMA_CLOUD_API_KEY"],
-    baseUrl: ["OLLAMA_BASE_URL", "OLLAMA_CLOUD_BASE_URL"],
+    apiKey: ["OLLAMA_CLOUD_API_KEY", "OLLAMA_API_KEY"],
+    baseUrl: ["OLLAMA_CLOUD_BASE_URL", "OLLAMA_BASE_URL"],
   },
   bedrock: {
     region: ["AWS_REGION", "AWS_DEFAULT_REGION"],

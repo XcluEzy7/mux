@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { readPersistedString, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import {
@@ -88,6 +88,36 @@ function dedupeKeepFirst(models: string[]): string[] {
   return out;
 }
 
+function isProviderConfigured(config: ProvidersConfigMap | null, provider: string): boolean {
+  return config?.[provider]?.isConfigured === true && config?.[provider]?.isEnabled !== false;
+}
+
+function isGatewayModelAccessibleForConfig(
+  config: ProvidersConfigMap | null,
+  gateway: string,
+  modelId: string
+): boolean {
+  return isGatewayModelAccessibleFromAuthoritativeCatalog(gateway, modelId, config?.[gateway]?.models);
+}
+
+function isAuthoritativeProviderModelAccessibleForConfig(
+  config: ProvidersConfigMap | null,
+  modelString: string
+): boolean {
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex >= modelString.length - 1) {
+    return true;
+  }
+
+  const provider = modelString.slice(0, colonIndex);
+  const providerModelId = modelString.slice(colonIndex + 1);
+  return isProviderModelAccessibleFromAuthoritativeCatalog(
+    provider,
+    providerModelId,
+    config?.[provider]?.models
+  );
+}
+
 export function getSuggestedModels(config: ProvidersConfigMap | null): string[] {
   const customModels = getCustomModels(config);
   return dedupeKeepFirst([...customModels, ...BUILT_IN_MODELS]);
@@ -115,18 +145,15 @@ export function useModelsFromSettings() {
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
   const { api } = useAPI();
 
-  const persistModelPrefs = useCallback(
-    (patch: { defaultModel?: string; hiddenModels?: string[] }) => {
-      if (!api?.config?.updateModelPreferences) {
-        return;
-      }
+  const persistModelPrefs = (patch: { defaultModel?: string; hiddenModels?: string[] }) => {
+    if (!api?.config?.updateModelPreferences) {
+      return;
+    }
 
-      api.config.updateModelPreferences(patch).catch(() => {
-        // Best-effort only; startup seeding will heal the cache next time.
-      });
-    },
-    [api]
-  );
+    api.config.updateModelPreferences(patch).catch(() => {
+      // Best-effort only; startup seeding will heal the cache next time.
+    });
+  };
   const { config, refresh } = useProvidersConfig();
   const { routePriority, routeOverrides } = useRouting();
 
@@ -136,63 +163,30 @@ export function useModelsFromSettings() {
     { listener: true }
   );
 
-  const setDefaultModelAndPersist = useCallback(
-    (next: string | ((prev: string) => string)) => {
-      setDefaultModel((prev) => {
-        const resolved = typeof next === "function" ? next(prev) : next;
-        const selectedModel = normalizeSelectedModel(resolved);
-        const previousSelectedModel = normalizeSelectedModel(prev);
+  const setDefaultModelAndPersist = (next: string | ((prev: string) => string)) => {
+    setDefaultModel((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      const selectedModel = normalizeSelectedModel(resolved);
+      const previousSelectedModel = normalizeSelectedModel(prev);
 
-        if (selectedModel !== previousSelectedModel) {
-          persistModelPrefs({ defaultModel: selectedModel });
-        }
+      if (selectedModel !== previousSelectedModel) {
+        persistModelPrefs({ defaultModel: selectedModel });
+      }
 
-        return selectedModel;
-      });
-    },
-    [persistModelPrefs, setDefaultModel]
-  );
+      return selectedModel;
+    });
+  };
 
   const [hiddenModels, setHiddenModels] = usePersistedState<string[]>(HIDDEN_MODELS_KEY, [], {
     listener: true,
   });
 
-  const isConfigured = useCallback(
-    (provider: string) =>
-      config?.[provider]?.isConfigured === true && config?.[provider]?.isEnabled !== false,
-    [config]
-  );
-
-  const isGatewayModelAccessible = useCallback(
-    (gateway: string, modelId: string) =>
-      isGatewayModelAccessibleFromAuthoritativeCatalog(gateway, modelId, config?.[gateway]?.models),
-    [config]
-  );
-
-  const isAuthoritativeProviderModelAccessible = useCallback(
-    (modelString: string) => {
-      const colonIndex = modelString.indexOf(":");
-      if (colonIndex <= 0 || colonIndex >= modelString.length - 1) {
-        return true;
-      }
-
-      const provider = modelString.slice(0, colonIndex);
-      const providerModelId = modelString.slice(colonIndex + 1);
-      return isProviderModelAccessibleFromAuthoritativeCatalog(
-        provider,
-        providerModelId,
-        config?.[provider]?.models
-      );
-    },
-    [config]
-  );
-
   const customModels = useMemo(() => {
     const next = filterHiddenModels(getCustomModels(config), hiddenModels).filter(
-      isAuthoritativeProviderModelAccessible
+      (modelString) => isAuthoritativeProviderModelAccessibleForConfig(config, modelString)
     );
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, isAuthoritativeProviderModelAccessible]);
+  }, [config, hiddenModels, effectivePolicy]);
 
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
@@ -213,7 +207,7 @@ export function useModelsFromSettings() {
         return false;
       }
 
-      if (!isAuthoritativeProviderModelAccessible(modelId)) {
+      if (!isAuthoritativeProviderModelAccessibleForConfig(config, modelId)) {
         return true;
       }
 
@@ -222,8 +216,9 @@ export function useModelsFromSettings() {
           modelId,
           routePriority,
           routeOverrides,
-          isConfigured,
-          isGatewayModelAccessible
+          (provider) => isProviderConfigured(config, provider),
+          (gateway, providerModelId) =>
+            isGatewayModelAccessibleForConfig(config, gateway, providerModelId)
         )
       ) {
         return false;
@@ -250,9 +245,6 @@ export function useModelsFromSettings() {
     config,
     hiddenModels,
     effectivePolicy,
-    isConfigured,
-    isGatewayModelAccessible,
-    isAuthoritativeProviderModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,
@@ -274,13 +266,14 @@ export function useModelsFromSettings() {
         ? suggested
         : suggested.filter(
             (modelId) =>
-              isAuthoritativeProviderModelAccessible(modelId) &&
+              isAuthoritativeProviderModelAccessibleForConfig(config, modelId) &&
               isModelAvailable(
                 modelId,
                 routePriority,
                 routeOverrides,
-                isConfigured,
-                isGatewayModelAccessible
+                (provider) => isProviderConfigured(config, provider),
+                (gateway, providerModelId) =>
+                  isGatewayModelAccessibleForConfig(config, gateway, providerModelId)
               )
           );
 
@@ -318,9 +311,6 @@ export function useModelsFromSettings() {
     config,
     hiddenModels,
     effectivePolicy,
-    isConfigured,
-    isGatewayModelAccessible,
-    isAuthoritativeProviderModelAccessible,
     routePriority,
     routeOverrides,
     openaiApiKeySet,
@@ -330,83 +320,74 @@ export function useModelsFromSettings() {
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.
    */
-  const ensureModelInSettings = useCallback(
-    (modelString: string) => {
-      if (!api) return;
+  const ensureModelInSettings = (modelString: string) => {
+    if (!api) return;
 
-      const selectedModel = normalizeSelectedModel(modelString);
-      if (!selectedModel) return;
+    const selectedModel = normalizeSelectedModel(modelString);
+    if (!selectedModel) return;
 
-      const canonicalModel = normalizeToCanonical(selectedModel).trim();
-      if (BUILT_IN_MODEL_SET.has(canonicalModel)) return;
-      if (!isModelAllowedByPolicy(effectivePolicy, canonicalModel)) {
-        return;
-      }
-      if (getExplicitGatewayPrefix(selectedModel)) return;
+    const canonicalModel = normalizeToCanonical(selectedModel).trim();
+    if (BUILT_IN_MODEL_SET.has(canonicalModel)) return;
+    if (!isModelAllowedByPolicy(effectivePolicy, canonicalModel)) {
+      return;
+    }
+    if (getExplicitGatewayPrefix(selectedModel)) return;
 
-      const colonIndex = selectedModel.indexOf(":");
-      if (colonIndex === -1) return;
+    const colonIndex = selectedModel.indexOf(":");
+    if (colonIndex === -1) return;
 
-      const provider = selectedModel.slice(0, colonIndex);
-      const modelId = selectedModel.slice(colonIndex + 1);
-      if (!provider || !modelId) return;
-      if (!isValidProvider(provider)) return;
+    const provider = selectedModel.slice(0, colonIndex);
+    const modelId = selectedModel.slice(colonIndex + 1);
+    if (!provider || !modelId) return;
+    if (!isValidProvider(provider)) return;
 
-      const run = async () => {
-        const providerConfig = config ?? (await api.providers.getConfig());
-        const existingModels: ProviderModelEntry[] = providerConfig[provider]?.models ?? [];
-        if (existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) return;
+    const run = async () => {
+      const providerConfig = config ?? (await api.providers.getConfig());
+      const existingModels: ProviderModelEntry[] = providerConfig[provider]?.models ?? [];
+      if (existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) return;
 
-        await api.providers.setModels({ provider, models: [...existingModels, modelId] });
-        await refresh();
-      };
+      await api.providers.setModels({ provider, models: [...existingModels, modelId] });
+      await refresh();
+    };
 
-      run().catch(() => {
-        // Ignore failures - user can still manage models via Settings
-      });
-    },
-    [api, config, refresh, effectivePolicy]
-  );
+    run().catch(() => {
+      // Ignore failures - user can still manage models via Settings
+    });
+  };
 
-  const hideModel = useCallback(
-    (modelString: string) => {
-      const canonical = normalizeToCanonical(modelString).trim();
-      if (!canonical) {
-        return;
-      }
+  const hideModel = (modelString: string) => {
+    const canonical = normalizeToCanonical(modelString).trim();
+    if (!canonical) {
+      return;
+    }
 
-      setHiddenModels((prev) => {
-        if (prev.includes(canonical)) {
-          return prev;
-        }
-
-        const nextHiddenModels = [...prev, canonical];
-        persistModelPrefs({ hiddenModels: nextHiddenModels });
-        return nextHiddenModels;
-      });
-    },
-    [persistModelPrefs, setHiddenModels]
-  );
-
-  const unhideModel = useCallback(
-    (modelString: string) => {
-      const canonical = normalizeToCanonical(modelString).trim();
-      if (!canonical) {
-        return;
+    setHiddenModels((prev) => {
+      if (prev.includes(canonical)) {
+        return prev;
       }
 
-      setHiddenModels((prev) => {
-        const nextHiddenModels = prev.filter((m) => m !== canonical);
-        if (nextHiddenModels.length === prev.length) {
-          return prev;
-        }
+      const nextHiddenModels = [...prev, canonical];
+      persistModelPrefs({ hiddenModels: nextHiddenModels });
+      return nextHiddenModels;
+    });
+  };
 
-        persistModelPrefs({ hiddenModels: nextHiddenModels });
-        return nextHiddenModels;
-      });
-    },
-    [persistModelPrefs, setHiddenModels]
-  );
+  const unhideModel = (modelString: string) => {
+    const canonical = normalizeToCanonical(modelString).trim();
+    if (!canonical) {
+      return;
+    }
+
+    setHiddenModels((prev) => {
+      const nextHiddenModels = prev.filter((m) => m !== canonical);
+      if (nextHiddenModels.length === prev.length) {
+        return prev;
+      }
+
+      persistModelPrefs({ hiddenModels: nextHiddenModels });
+      return nextHiddenModels;
+    });
+  };
 
   return {
     ensureModelInSettings,

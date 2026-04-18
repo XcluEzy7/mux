@@ -39,10 +39,6 @@ import {
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
-import {
-  ensureTailscaleSshConfig,
-  removeTailscaleSshConfig,
-} from "@/node/runtime/tailscaleSshConfigWriter";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
@@ -86,10 +82,6 @@ import * as path from "node:path";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
-import {
-  ensureTailscaleSshConfig,
-  removeTailscaleSshConfig,
-} from "@/node/runtime/tailscaleSshConfigWriter";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { refreshOllamaProviderCatalog } from "@/node/services/ollamaModelCatalog";
 import { log } from "@/node/services/log";

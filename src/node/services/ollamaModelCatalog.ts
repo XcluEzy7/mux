@@ -14,6 +14,7 @@ import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 
 export const OLLAMA_LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/api";
 export const OLLAMA_CLOUD_DEFAULT_BASE_URL = "https://ollama.com/api";
+export const OLLAMA_SHOW_DETAILS_CONCURRENCY_LIMIT = 4;
 
 export type RefreshableOllamaProvider = "ollama" | "ollama-cloud";
 
@@ -128,6 +129,32 @@ async function fetchOllamaJson(
   }
 }
 
+async function mapWithConcurrencyLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex]);
+      }
+    })
+  );
+
+  return results;
+}
+
 function extractModelId(entry: unknown): string | null {
   if (typeof entry !== "object" || entry === null) {
     return null;
@@ -208,12 +235,10 @@ async function fetchRemoteModelCatalog(params: {
     return modelId == null ? [] : [modelId];
   });
 
-  if (remoteModelIds.length === 0) {
-    throw new Error("No models returned from Ollama");
-  }
-
-  const summaries = await Promise.all(
-    remoteModelIds.map(async (modelId) => {
+  const summaries = await mapWithConcurrencyLimit(
+    remoteModelIds,
+    OLLAMA_SHOW_DETAILS_CONCURRENCY_LIMIT,
+    async (modelId) => {
       try {
         const showPayload = await fetchOllamaJson(`${baseUrl}/show`, {
           method: "POST",
@@ -243,7 +268,7 @@ async function fetchRemoteModelCatalog(params: {
           contextWindowTokens: null,
         } satisfies RemoteModelSummary;
       }
-    })
+    }
   );
 
   return summaries;
@@ -331,11 +356,19 @@ export async function refreshConfiguredOllamaCatalogs(params: {
   const providersConfig = params.config.loadProvidersConfig() ?? {};
   const providersToRefresh: RefreshableOllamaProvider[] = [];
 
-  if (providersConfig.ollama != null) {
+  if (
+    providersConfig.ollama != null &&
+    providersConfig.ollama.enabled !== false &&
+    resolveProviderCredentials("ollama", providersConfig.ollama).isConfigured
+  ) {
     providersToRefresh.push("ollama");
   }
 
-  if (providersConfig["ollama-cloud"] != null) {
+  if (
+    providersConfig["ollama-cloud"] != null &&
+    providersConfig["ollama-cloud"].enabled !== false &&
+    resolveProviderCredentials("ollama-cloud", providersConfig["ollama-cloud"]).isConfigured
+  ) {
     providersToRefresh.push("ollama-cloud");
   }
 

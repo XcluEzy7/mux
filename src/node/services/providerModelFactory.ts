@@ -1387,6 +1387,10 @@ export class ProviderModelFactory {
       if (providerName === "ollama" || providerName === "ollama-cloud") {
         const baseFetch = getProviderFetch(providerConfig);
         const configuredModelIds = getConfiguredProviderModelIds(providerConfig);
+        const cloudCredentials =
+          providerName === "ollama-cloud"
+            ? resolveProviderCredentials("ollama-cloud", providerConfig)
+            : null;
         if (
           providerName === "ollama-cloud" &&
           configuredModelIds.length > 0 &&
@@ -1407,26 +1411,24 @@ export class ProviderModelFactory {
           apiKeyFile: _apiKeyFile,
           ...restOptions
         } = providerConfig as ProviderConfig & { headers?: Record<string, string> };
+        const configuredBaseURL =
+          (typeof baseURL === "string" && baseURL) ||
+          (typeof baseUrl === "string" && baseUrl) ||
+          cloudCredentials?.baseUrl;
         const normalizedBaseURL =
-          typeof baseURL === "string" || typeof baseUrl === "string"
-            ? normalizeOllamaApiBaseUrl(
-                (typeof baseURL === "string" && baseURL) ||
-                  (typeof baseUrl === "string" && baseUrl) ||
-                  undefined,
-                providerName
-              )
+          typeof configuredBaseURL === "string"
+            ? normalizeOllamaApiBaseUrl(configuredBaseURL, providerName)
             : providerName === "ollama-cloud"
               ? normalizeOllamaApiBaseUrl(undefined, providerName)
               : undefined;
         const providerHeaders = { ...(headers ?? {}) };
 
         if (providerName === "ollama-cloud") {
-          const creds = resolveProviderCredentials("ollama-cloud", providerConfig);
-          if (!creds.isConfigured) {
+          if (!cloudCredentials?.isConfigured) {
             return Err({ type: "api_key_not_found", provider: providerName });
           }
-          const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-          if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          const resolvedApiKey = await this.resolveApiKey(cloudCredentials.apiKey);
+          if (cloudCredentials.apiKey && isOpReference(cloudCredentials.apiKey) && !resolvedApiKey) {
             return Err({ type: "api_key_not_found", provider: providerName });
           }
           providerHeaders.Authorization = `Bearer ${resolvedApiKey ?? ""}`;

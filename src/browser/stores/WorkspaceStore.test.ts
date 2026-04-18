@@ -21,6 +21,21 @@ interface LoadMoreResponse {
   hasOlder: boolean;
 }
 
+interface OllamaRefreshClient {
+  providers: {
+    getConfig: () => Promise<{
+      ollama?: { isConfigured?: boolean; isEnabled?: boolean };
+      "ollama-cloud"?: { isConfigured?: boolean; isEnabled?: boolean };
+    }>;
+  };
+  ollama: {
+    refreshModels: () => Promise<unknown>;
+  };
+  ollamaCloud: {
+    refreshModels: () => Promise<unknown>;
+  };
+}
+
 // Mock client
 // eslint-disable-next-line require-yield
 const mockOnChat = mock(async function* (
@@ -1318,6 +1333,67 @@ describe("WorkspaceStore", () => {
       const usage = store.getWorkspaceUsage("workspace-1");
       expect(usage.sessionTotal).toBeDefined();
       expect(usage.sessionTotal!.input.tokens).toBe(9999);
+    });
+  });
+
+  describe("Ollama catalog refresh", () => {
+    it("dedupes overlapping workspace refreshes before fetching provider config", async () => {
+      let releaseConfig = (): void => undefined;
+      const configGate = new Promise<void>((resolve) => {
+        releaseConfig = resolve;
+      });
+      const getConfig = mock(async () => {
+        await configGate;
+        return {
+          ollama: { isConfigured: true, isEnabled: true },
+        };
+      });
+      const refreshModels = mock(() => Promise.resolve(undefined));
+      const client: OllamaRefreshClient = {
+        providers: { getConfig },
+        ollama: { refreshModels },
+        ollamaCloud: { refreshModels: mock(() => Promise.resolve(undefined)) },
+      };
+      const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
+        client: OllamaRefreshClient,
+        workspaceId: string
+      ) => Promise<void>;
+
+      const first = refresh.call(store, client, "workspace-1");
+      const second = refresh.call(store, client, "workspace-1");
+      await Promise.resolve();
+
+      expect(getConfig).toHaveBeenCalledTimes(1);
+
+      releaseConfig();
+      await Promise.all([first, second]);
+
+      expect(refreshModels).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries a workspace refresh after a best-effort failure", async () => {
+      const getConfig = mock(() =>
+        Promise.resolve({
+          ollama: { isConfigured: true, isEnabled: true },
+        })
+      );
+      const refreshModels = mock<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce(undefined);
+      const client: OllamaRefreshClient = {
+        providers: { getConfig },
+        ollama: { refreshModels },
+        ollamaCloud: { refreshModels: mock(() => Promise.resolve(undefined)) },
+      };
+      const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
+        client: OllamaRefreshClient,
+        workspaceId: string
+      ) => Promise<void>;
+
+      await refresh.call(store, client, "workspace-2");
+      await refresh.call(store, client, "workspace-2");
+
+      expect(refreshModels).toHaveBeenCalledTimes(2);
     });
   });
 
