@@ -29,7 +29,10 @@ import {
   openProjectCreationView,
   setupTestDom,
   setupWorkspaceView,
+  waitForLatestDraftId,
 } from "../helpers";
+import { ChatHarness } from "../harness";
+import { getDraftScopeId } from "@/common/constants/storage";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -86,6 +89,31 @@ function getAgentIdByName(container: HTMLElement, name: string): string | null {
     }
   }
   return null;
+}
+
+function getAgentPickerTriggerText(container: HTMLElement): string {
+  const trigger = container.querySelector('[aria-label="Select agent"]');
+  return trigger?.textContent?.replace(/[⌘⌃⇧\d]/g, "").trim() ?? "";
+}
+
+async function waitForCreatedWorkspaceId(
+  env: ReturnType<typeof getSharedEnv>,
+  projectPath: string,
+  existingIds: Set<string>
+): Promise<string> {
+  return waitFor(
+    async () => {
+      const workspaces = await env.orpc.workspace.list({ archived: false });
+      const created = workspaces.find(
+        (workspace) => workspace.projectPath === projectPath && !existingIds.has(workspace.id)
+      );
+      if (!created) {
+        throw new Error("Created workspace not found yet");
+      }
+      return created.id;
+    },
+    { timeout: 10_000 }
+  );
 }
 
 /**
@@ -259,6 +287,87 @@ You are a code review agent. Review code for quality, readability, and best prac
       }
     });
   }, 30_000);
+
+  test("creation mode agent selection persists after first send creates workspace", async () => {
+    await withSharedWorkspace("anthropic", async ({ env }) => {
+      const projectPath = getSharedRepoPath();
+
+      let createdWorkspaceId: string | null = null;
+      const cleanupDom = setupTestDom();
+      const view = renderApp({ apiClient: env.orpc });
+
+      try {
+        await view.waitForReady();
+        const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+        const existingWorkspaceIds = new Set(
+          (await env.orpc.workspace.list({ archived: false }))
+            .filter((workspace) => workspace.projectPath === normalizedProjectPath)
+            .map((workspace) => workspace.id)
+        );
+        await openProjectCreationView(view, normalizedProjectPath);
+
+        await openAgentPicker(view.container);
+        const planRow = view.container.querySelector(
+          '[data-agent-id="plan"]'
+        ) as HTMLElement | null;
+        if (!planRow) {
+          throw new Error("Plan agent row not found");
+        }
+        fireEvent.click(planRow);
+
+        await waitFor(
+          () => {
+            const triggerText = getAgentPickerTriggerText(view.container);
+            if (!triggerText.includes("Plan")) {
+              throw new Error(`Expected Plan in trigger text, got "${triggerText}"`);
+            }
+          },
+          { timeout: 5_000 }
+        );
+
+        const draftId = await waitForLatestDraftId(normalizedProjectPath);
+        const creationChat = new ChatHarness(
+          view.container,
+          getDraftScopeId(normalizedProjectPath, draftId)
+        );
+        await creationChat.send("Verify agent selection survives creation handoff");
+
+        createdWorkspaceId = await waitForCreatedWorkspaceId(
+          env,
+          normalizedProjectPath,
+          existingWorkspaceIds
+        );
+
+        await waitFor(
+          () => {
+            const messageWindow = view.container.querySelector('[data-testid="message-window"]');
+            if (!messageWindow) {
+              throw new Error("Workspace chat view not rendered yet");
+            }
+          },
+          { timeout: 10_000 }
+        );
+
+        await waitFor(
+          () => {
+            const triggerText = getAgentPickerTriggerText(view.container);
+            if (!triggerText.includes("Plan")) {
+              throw new Error(`Expected Plan in workspace trigger text, got "${triggerText}"`);
+            }
+          },
+          { timeout: 10_000 }
+        );
+      } finally {
+        if (createdWorkspaceId) {
+          await env.orpc.workspace.remove({
+            workspaceId: createdWorkspaceId,
+            options: { force: true },
+          });
+        }
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 60_000);
 
   test("agent picker shows agents on project page (no workspace)", async () => {
     // This test reproduces a bug where the agent picker shows "No matching agents"

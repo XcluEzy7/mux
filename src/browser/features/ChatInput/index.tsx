@@ -2723,7 +2723,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 )}
 
-                <div className="min-w-0 [@container(max-width:340px)]:hidden">
+                <div className="min-w-0">
                   <AgentModePicker
                     className="min-w-0"
                     onComplete={() => inputRef.current?.focus()}

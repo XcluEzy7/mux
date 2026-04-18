@@ -186,6 +186,11 @@ function AppInner() {
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
+  const [creationHandoffAgentRefresh, setCreationHandoffAgentRefresh] = useState<{
+    workspaceId: string;
+    nonce: number;
+  } | null>(null);
+
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
   // collapse remains a separate toggle and the drag handle is hidden in mobile-touch overlay mode.
   const leftSidebar = useResizableSidebar({
@@ -237,6 +242,21 @@ function AppInner() {
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
   }, [setSidebarCollapsed]);
+
+  const handleCreationHandoffAgentRefreshConsumed = useCallback(
+    (workspaceId: string, nonce: number) => {
+      setCreationHandoffAgentRefresh((current) => {
+        if (!current) {
+          return current;
+        }
+        if (current.workspaceId !== workspaceId || current.nonce !== nonce) {
+          return current;
+        }
+        return null;
+      });
+    },
+    []
+  );
 
   // Telemetry tracking
   const telemetry = useTelemetry();
@@ -1120,6 +1140,14 @@ function AppInner() {
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}
                       isInitializing={currentMetadata.isInitializing === true}
+                      creationHandoffAgentRefreshNonce={
+                        creationHandoffAgentRefresh?.workspaceId === selectedWorkspace.workspaceId
+                          ? creationHandoffAgentRefresh.nonce
+                          : null
+                      }
+                      onCreationHandoffAgentRefreshConsumed={
+                        handleCreationHandoffAgentRefreshConsumed
+                      }
                     />
                   </ErrorBoundary>
                 );
@@ -1184,6 +1212,13 @@ function AppInner() {
                             metadata.id,
                             options?.pendingStreamModel ?? null
                           );
+                          setCreationHandoffAgentRefresh((current) => ({
+                            workspaceId: metadata.id,
+                            nonce:
+                              current && current.workspaceId === metadata.id
+                                ? current.nonce + 1
+                                : 1,
+                          }));
                         }
                       }
 
