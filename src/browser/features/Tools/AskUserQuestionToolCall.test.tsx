@@ -26,10 +26,10 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-type AnswerAskUserQuestionResult = {
+interface AnswerAskUserQuestionResult {
   success: true;
   data: { handoffAgentId: "exec" | "orchestrator" | null };
-};
+}
 
 const answerAskUserQuestion = mock(
   (_input: unknown): Promise<AnswerAskUserQuestionResult> =>
@@ -226,12 +226,10 @@ describe("AskUserQuestionToolCall", () => {
       expect(resumeStream).toHaveBeenCalledTimes(1);
     });
 
-    expect(resumeStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "ws-ask",
-        options: expect.objectContaining({ agentId: "exec" }),
-      })
-    );
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "exec" },
+    });
   });
 
   test("routes resume to orchestrator when answer response returns orchestrator handoff", async () => {
@@ -255,12 +253,10 @@ describe("AskUserQuestionToolCall", () => {
       expect(resumeStream).toHaveBeenCalledTimes(1);
     });
 
-    expect(resumeStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "ws-ask",
-        options: expect.objectContaining({ agentId: "orchestrator" }),
-      })
-    );
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "orchestrator" },
+    });
   });
 
   test("keeps current send options when answer response has no handoff target", async () => {
@@ -280,12 +276,10 @@ describe("AskUserQuestionToolCall", () => {
       expect(resumeStream).toHaveBeenCalledTimes(1);
     });
 
-    expect(resumeStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: "ws-ask",
-        options: expect.objectContaining({ agentId: "plan" }),
-      })
-    );
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "plan" },
+    });
   });
 
   test("rolls back temporary retry enable when resume reports not started", async () => {

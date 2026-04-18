@@ -32,6 +32,10 @@ import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
 import { detectTailscale } from "@/node/services/tailscaleDetector";
+import {
+  ensureTailscaleSshConfig,
+  removeTailscaleSshConfig,
+} from "@/node/runtime/tailscaleSshConfigWriter";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -467,8 +471,6 @@ export const router = (authToken?: string) => {
           // In server mode, users copy the snippet from Settings — no filesystem access.
           const isElectron = "electron" in process.versions;
           if (isElectron) {
-            const { ensureTailscaleSshConfig, removeTailscaleSshConfig } =
-              await import("@/node/runtime/tailscaleSshConfigWriter");
             if (input.config?.enabled && input.config.sshHost) {
               await ensureTailscaleSshConfig({
                 sshHost: input.config.sshHost,
