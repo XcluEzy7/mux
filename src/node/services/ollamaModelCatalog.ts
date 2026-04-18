@@ -134,6 +134,10 @@ async function mapWithConcurrencyLimit<T, R>(
   limit: number,
   mapper: (item: T) => Promise<R>
 ): Promise<R[]> {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("Concurrency limit must be a positive integer");
+  }
+
   if (items.length === 0) {
     return [];
   }
