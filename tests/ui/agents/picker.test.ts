@@ -291,11 +291,6 @@ You are a code review agent. Review code for quality, readability, and best prac
   test("creation mode agent selection persists after first send creates workspace", async () => {
     await withSharedWorkspace("anthropic", async ({ env }) => {
       const projectPath = getSharedRepoPath();
-      const existingWorkspaceIds = new Set(
-        (await env.orpc.workspace.list({ archived: false }))
-          .filter((workspace) => workspace.projectPath === projectPath)
-          .map((workspace) => workspace.id)
-      );
 
       let createdWorkspaceId: string | null = null;
       const cleanupDom = setupTestDom();
@@ -304,6 +299,11 @@ You are a code review agent. Review code for quality, readability, and best prac
       try {
         await view.waitForReady();
         const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+        const existingWorkspaceIds = new Set(
+          (await env.orpc.workspace.list({ archived: false }))
+            .filter((workspace) => workspace.projectPath === normalizedProjectPath)
+            .map((workspace) => workspace.id)
+        );
         await openProjectCreationView(view, normalizedProjectPath);
 
         await openAgentPicker(view.container);

@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync/WorkspaceModeAISync";
-import { AgentProvider } from "@/browser/contexts/AgentContext";
+import { AgentProvider, useAgent } from "@/browser/contexts/AgentContext";
 import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { WorkspaceShell } from "../WorkspaceShell/WorkspaceShell";
 
@@ -48,6 +48,18 @@ const IncompatibleWorkspaceView: React.FC<{ message: string; className?: string 
   </div>
 );
 
+function WorkspaceScopedAgentRefresh(props: { workspaceId: string }): null {
+  const { refresh } = useAgent();
+
+  useEffect(() => {
+    // Keep creation -> workspace handoff deterministic by refreshing once after the
+    // workspace-scoped provider mounts for this workspace id.
+    void refresh();
+  }, [refresh, props.workspaceId]);
+
+  return null;
+}
+
 // Wrapper component that provides the agent and thinking contexts
 export const AIView: React.FC<AIViewProps> = (props) => {
   // Early return for incompatible workspaces - no hooks called in this path
@@ -59,6 +71,7 @@ export const AIView: React.FC<AIViewProps> = (props) => {
 
   return (
     <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+      <WorkspaceScopedAgentRefresh workspaceId={props.workspaceId} />
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ThinkingProvider workspaceId={props.workspaceId}>
         <BackgroundBashProvider workspaceId={props.workspaceId}>
