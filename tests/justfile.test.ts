@@ -53,8 +53,7 @@ describe("justfile dev server lifecycle", () => {
       DEV_SERVER_PID_FILE: pidFile,
       DEV_SERVER_LOG_FILE: logFile,
       DEV_SERVER_STARTUP_WAIT_SECS: "0.2",
-      DEV_SERVER_CMD:
-        "node -e 'console.log(\"justfile-test-ready\"); setInterval(() => {}, 1000)'",
+      DEV_SERVER_CMD: "node -e 'console.log(\"justfile-test-ready\"); setInterval(() => {}, 1000)'",
     };
 
     const startOutput = runJust(["start"], env);
@@ -62,7 +61,10 @@ describe("justfile dev server lifecycle", () => {
 
     const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
     expect(Number.isFinite(pid)).toBe(true);
-    waitFor(() => fs.existsSync(logFile) && fs.readFileSync(logFile, "utf8").includes("justfile-test-ready"));
+    waitFor(
+      () =>
+        fs.existsSync(logFile) && fs.readFileSync(logFile, "utf8").includes("justfile-test-ready")
+    );
     expect(isAlive(pid)).toBe(true);
 
     const statusOutput = runJust(["status"], env);

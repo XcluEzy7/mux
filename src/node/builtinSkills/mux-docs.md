@@ -78,6 +78,8 @@ Use this index to find a page's:
       - Environment Variables (`/hooks/environment-variables`) → `references/docs/hooks/environment-variables.mdx` — Environment variables available in agent bash commands and hooks
   - **Agents**
     - Agents (`/agents`) → `references/docs/agents/index.mdx` — Define custom agents (modes + subagents) with Markdown files
+    - Custom Agents (`/agents/custom-agents`) → `references/docs/agents/custom-agents.mdx` — Create, compose, and share custom agent profiles for specialized workflows
+    - Multi-Agent Orchestration (`/agents/orchestration`) → `references/docs/agents/orchestration.mdx` — Coordinate multiple agents using the task tool, best-of-N, variants, and switch_agent
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
@@ -92,6 +94,7 @@ Use this index to find a page's:
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for Mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
     - Server Access (`/config/server-access`) → `references/docs/config/server-access.mdx` — Configure authentication and session controls for mux server/browser mode
+    - Tailscale SSH (`/config/tailscale-ssh`) → `references/docs/config/tailscale-ssh.mdx` — Set up Tailscale SSH for remote editor connections with Mux
     - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the Mux chat input
   - **Guides**
     - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx` — Automate your workflows with mux run in GitHub Actions
@@ -105,6 +108,7 @@ Use this index to find a page's:
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
+    - Future Build Improvements (`/reference/future-build-improvements`) → `references/docs/reference/future-build-improvements.mdx` — Validation notes and follow-up ideas for the local build and CLI install workflow.
     - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase
 <!-- END DOCS_TREE -->
 
