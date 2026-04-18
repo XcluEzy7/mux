@@ -369,10 +369,10 @@ export async function refreshConfiguredOllamaCatalogs(params: {
     providersToRefresh.push("ollama");
   }
 
+  const cloudProviderConfig = getRawProviderConfig(providersConfig, "ollama-cloud");
   if (
-    providersConfig["ollama-cloud"] != null &&
-    providersConfig["ollama-cloud"].enabled !== false &&
-    resolveProviderCredentials("ollama-cloud", providersConfig["ollama-cloud"]).isConfigured
+    cloudProviderConfig.enabled !== false &&
+    resolveProviderCredentials("ollama-cloud", cloudProviderConfig).isConfigured
   ) {
     providersToRefresh.push("ollama-cloud");
   }

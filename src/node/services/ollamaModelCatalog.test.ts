@@ -323,6 +323,57 @@ describe("refreshConfiguredOllamaCatalogs", () => {
     globalThis.fetch = originalFetch;
   });
 
+  it("refreshes ollama-cloud at startup for env-only credentials", async () => {
+    await withTempConfig(async (config, providerService) => {
+      const originalCloudApiKey = process.env.OLLAMA_CLOUD_API_KEY;
+      const originalFallbackApiKey = process.env.OLLAMA_API_KEY;
+      const originalCloudBaseUrl = process.env.OLLAMA_CLOUD_BASE_URL;
+      const originalFallbackBaseUrl = process.env.OLLAMA_BASE_URL;
+
+      process.env.OLLAMA_CLOUD_API_KEY = "env-cloud-key";
+      delete process.env.OLLAMA_API_KEY;
+      process.env.OLLAMA_CLOUD_BASE_URL = "https://env-cloud.example.com/ollama";
+      delete process.env.OLLAMA_BASE_URL;
+
+      try {
+        let tagRequests = 0;
+        setFetchImplementation((input, init) => {
+          const url = getRequestUrl(input);
+          if (url === "https://env-cloud.example.com/ollama/api/tags") {
+            tagRequests += 1;
+            const authHeader = new Headers(init?.headers).get("Authorization");
+            expect(authHeader).toBe("Bearer env-cloud-key");
+            return Promise.resolve(jsonResponse({ models: [{ name: "env-cloud-model" }] }));
+          }
+
+          if (url === "https://env-cloud.example.com/ollama/api/show") {
+            const body = parseShowBody(init);
+            return Promise.resolve(
+              jsonResponse({ details: { context_length: 4096 }, name: body.model })
+            );
+          }
+
+          throw new Error(`Unexpected request for ${url}`);
+        });
+
+        await refreshConfiguredOllamaCatalogs({
+          config,
+          providerService,
+        });
+
+        expect(tagRequests).toBe(1);
+        expect(config.loadProvidersConfig()?.["ollama-cloud"]?.models).toEqual([
+          { id: "env-cloud-model", contextWindowTokens: 4096 },
+        ]);
+      } finally {
+        restoreEnv("OLLAMA_CLOUD_API_KEY", originalCloudApiKey);
+        restoreEnv("OLLAMA_API_KEY", originalFallbackApiKey);
+        restoreEnv("OLLAMA_CLOUD_BASE_URL", originalCloudBaseUrl);
+        restoreEnv("OLLAMA_BASE_URL", originalFallbackBaseUrl);
+      }
+    });
+  });
+
   it("skips disabled providers during startup refresh", async () => {
     await withTempConfig(async (config, providerService) => {
       config.saveProvidersConfig({
