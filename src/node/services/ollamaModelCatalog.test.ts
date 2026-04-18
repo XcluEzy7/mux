@@ -63,6 +63,15 @@ function parseShowBody(init?: RequestInit): { model: string } {
   return JSON.parse(init.body) as { model: string };
 }
 
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}
+
 describe("normalizeOllamaApiBaseUrl", () => {
   it("appends /api when users provide a host-only local URL", () => {
     expect(normalizeOllamaApiBaseUrl("http://localhost:11434", "ollama")).toBe(
@@ -183,6 +192,52 @@ describe("refreshOllamaProviderCatalog", () => {
         { id: "keep-mapping", mappedToModel: "openai:gpt-5.4" },
         { id: "new-cloud", contextWindowTokens: 32768 },
       ]);
+    });
+  });
+
+  it("uses env-resolved ollama-cloud base URL during refresh", async () => {
+    await withTempConfig(async (config, providerService) => {
+      const originalCloudBaseUrl = process.env.OLLAMA_CLOUD_BASE_URL;
+      const originalFallbackBaseUrl = process.env.OLLAMA_BASE_URL;
+
+      process.env.OLLAMA_CLOUD_BASE_URL = "https://proxy.example.com/ollama";
+      delete process.env.OLLAMA_BASE_URL;
+
+      config.saveProvidersConfig({
+        "ollama-cloud": {
+          apiKey: "ollama_test_key",
+          models: ["stale-cloud"],
+        },
+      });
+
+      try {
+        setFetchImplementation((input, init) => {
+          const url = getRequestUrl(input);
+          if (url === "https://proxy.example.com/ollama/api/tags") {
+            return Promise.resolve(jsonResponse({ models: [{ name: "proxied-cloud" }] }));
+          }
+
+          if (url === "https://proxy.example.com/ollama/api/show") {
+            const body = parseShowBody(init);
+            return Promise.resolve(
+              jsonResponse({ details: { context_length: 4096 }, name: body.model })
+            );
+          }
+
+          throw new Error(`Unexpected request for ${url}`);
+        });
+
+        const result = await refreshOllamaProviderCatalog({
+          provider: "ollama-cloud",
+          config,
+          providerService,
+        });
+
+        expect(result.modelIds).toEqual(["proxied-cloud"]);
+      } finally {
+        restoreEnv("OLLAMA_CLOUD_BASE_URL", originalCloudBaseUrl);
+        restoreEnv("OLLAMA_BASE_URL", originalFallbackBaseUrl);
+      }
     });
   });
 

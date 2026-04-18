@@ -210,10 +210,15 @@ async function fetchRemoteModelCatalog(params: {
   opResolver?: ExternalSecretResolver;
 }): Promise<RemoteModelSummary[]> {
   const headers = await resolveProviderHeaders(params);
+  const resolvedBaseUrl =
+    params.provider === "ollama-cloud"
+      ? resolveProviderCredentials("ollama-cloud", params.providerConfig).baseUrl
+      : undefined;
   const baseUrl = normalizeOllamaApiBaseUrl(
-    (typeof params.providerConfig.baseURL === "string" && params.providerConfig.baseURL) ||
-      (typeof params.providerConfig.baseUrl === "string" && params.providerConfig.baseUrl) ||
-      undefined,
+    resolvedBaseUrl ??
+      ((typeof params.providerConfig.baseURL === "string" && params.providerConfig.baseURL) ||
+        (typeof params.providerConfig.baseUrl === "string" && params.providerConfig.baseUrl) ||
+        undefined),
     params.provider
   );
 
