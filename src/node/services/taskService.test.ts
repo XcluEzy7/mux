@@ -7575,7 +7575,7 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalledWith(childTwoId, true);
   });
 
-  test("resolveAskUserQuestionApprovalIntent prioritizes explicit execute keywords", () => {
+  test("resolveAskUserQuestionApprovalIntent routes to exec only when explicitly approved", () => {
     const intent = resolveAskUserQuestionApprovalIntent({
       answers: {
         decision: "approved",
@@ -7586,6 +7586,16 @@ describe("TaskService", () => {
     });
 
     expect(intent).toBe("exec");
+  });
+
+  test("resolveAskUserQuestionApprovalIntent ignores execute keywords without explicit approval", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "don't execute yet",
+      },
+    });
+
+    expect(intent).toBeNull();
   });
 
   test("resolveAskUserQuestionApprovalIntent matches orchestrator keywords from checked labels", () => {
@@ -8303,6 +8313,21 @@ describe("TaskService", () => {
       workspaceId: childId,
       answers: {
         decision: "Please revise",
+      },
+    });
+
+    expect(targetAgentId).toBeNull();
+  });
+
+  test("ask_user_question non-approval execute wording does not trigger handoff", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "Don't execute yet, I need implementation details first",
       },
     });
 

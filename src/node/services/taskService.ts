@@ -227,24 +227,28 @@ export function resolveAskUserQuestionApprovalIntent(args: {
 }): AskUserQuestionApprovalIntent | null {
   const tokens = collectAskUserQuestionIntentTokens(args);
 
-  const hasExecIntent = [...ASK_USER_QUESTION_EXEC_KEYWORDS].some((keyword) => tokens.has(keyword));
-  const hasOrchestratorIntent = [...ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS].some((keyword) =>
+  const hasApprovalIntent = [...ASK_USER_QUESTION_APPROVAL_KEYWORDS].some((keyword) =>
     tokens.has(keyword)
   );
+  if (!hasApprovalIntent) {
+    // Execution intent keywords are only meaningful after explicit approval.
+    // This avoids false-positive handoffs for responses like "don't execute yet".
+    return null;
+  }
 
+  const hasExecIntent = [...ASK_USER_QUESTION_EXEC_KEYWORDS].some((keyword) => tokens.has(keyword));
   if (hasExecIntent) {
     return "exec";
   }
 
+  const hasOrchestratorIntent = [...ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS].some((keyword) =>
+    tokens.has(keyword)
+  );
   if (hasOrchestratorIntent) {
     return "orchestrator";
   }
 
-  const hasApprovalIntent = [...ASK_USER_QUESTION_APPROVAL_KEYWORDS].some((keyword) =>
-    tokens.has(keyword)
-  );
-
-  return hasApprovalIntent ? "approve" : null;
+  return "approve";
 }
 
 interface AgentTaskIndex {
