@@ -182,6 +182,28 @@ it("rejects Ollama Cloud models missing from the authoritative catalog", async (
   });
 });
 
+it("treats an explicitly empty ollama-cloud catalog as authoritative", async () => {
+  await withTempConfig(async (config, factory) => {
+    config.saveProvidersConfig({
+      "ollama-cloud": {
+        apiKey: "ollama_test_key",
+        models: [],
+      },
+    });
+
+    const result = await factory.createModel("ollama-cloud:gpt-oss:20b");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toEqual({
+        type: "model_not_available",
+        provider: "ollama-cloud",
+        modelId: "gpt-oss:20b",
+      });
+    }
+  });
+});
+
 it("prefers cloud-specific Ollama env vars for auth and base URL", async () => {
   await withTempConfig(async (config, factory) => {
     const originalRegistry = PROVIDER_REGISTRY["ollama-cloud"];

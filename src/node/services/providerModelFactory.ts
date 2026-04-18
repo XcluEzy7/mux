@@ -1391,11 +1391,9 @@ export class ProviderModelFactory {
           providerName === "ollama-cloud"
             ? resolveProviderCredentials("ollama-cloud", providerConfig)
             : null;
-        if (
-          providerName === "ollama-cloud" &&
-          configuredModelIds.length > 0 &&
-          !configuredModelIds.includes(modelId)
-        ) {
+        const hasAuthoritativeCloudCatalog =
+          providerName === "ollama-cloud" && Array.isArray(providerConfig.models);
+        if (hasAuthoritativeCloudCatalog && !configuredModelIds.includes(modelId)) {
           return Err({
             type: "model_not_available",
             provider: providerName,
