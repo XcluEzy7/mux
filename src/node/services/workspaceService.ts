@@ -5893,7 +5893,7 @@ export class WorkspaceService extends EventEmitter {
 
     try {
       // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
-      askUserQuestionManager.answer(workspaceId, toolCallId, answers);
+      askUserQuestionManager.answer(workspaceId, toolCallId, answers, answerSelections);
       return Ok({ handoffAgentId: await resolveHandoffAgentId() });
     } catch (error) {
       // Fallback path: app restart (or other process death) means the in-memory

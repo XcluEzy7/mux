@@ -7,9 +7,14 @@ export interface PendingAskUserQuestion {
   questions: AskUserQuestionQuestion[];
 }
 
+export interface AskUserQuestionResponse {
+  answers: Record<string, string>;
+  answerSelections?: Record<string, string[]> | null;
+}
+
 interface PendingAskUserQuestionInternal extends PendingAskUserQuestion {
   createdAt: number;
-  resolve: (answers: Record<string, string>) => void;
+  resolve: (answer: AskUserQuestionResponse) => void;
   reject: (error: Error) => void;
 }
 
@@ -20,7 +25,7 @@ export class AskUserQuestionManager {
     workspaceId: string,
     toolCallId: string,
     questions: AskUserQuestionQuestion[]
-  ): Promise<Record<string, string>> {
+  ): Promise<AskUserQuestionResponse> {
     assert(workspaceId.length > 0, "workspaceId must be non-empty");
     assert(toolCallId.length > 0, "toolCallId must be non-empty");
     assert(Array.isArray(questions) && questions.length > 0, "questions must be a non-empty array");
@@ -31,7 +36,7 @@ export class AskUserQuestionManager {
       `ask_user_question already pending for toolCallId=${toolCallId}`
     );
 
-    return new Promise<Record<string, string>>((resolve, reject) => {
+    return new Promise<AskUserQuestionResponse>((resolve, reject) => {
       const entry: PendingAskUserQuestionInternal = {
         toolCallId,
         questions,
@@ -47,13 +52,18 @@ export class AskUserQuestionManager {
     });
   }
 
-  answer(workspaceId: string, toolCallId: string, answers: Record<string, string>): void {
+  answer(
+    workspaceId: string,
+    toolCallId: string,
+    answers: Record<string, string>,
+    answerSelections?: Record<string, string[]> | null
+  ): void {
     assert(workspaceId.length > 0, "workspaceId must be non-empty");
     assert(toolCallId.length > 0, "toolCallId must be non-empty");
     assert(answers && typeof answers === "object", "answers must be an object");
 
     const entry = this.getPending(workspaceId, toolCallId);
-    entry.resolve(answers);
+    entry.resolve({ answers, answerSelections });
   }
 
   cancel(workspaceId: string, toolCallId: string, reason: string): void {

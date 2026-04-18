@@ -6668,6 +6668,7 @@ describe("WorkspaceService answerAskUserQuestion", () => {
     const toolCallId = "tool-ask-user-question-handoff-failure";
     const question = "How should we proceed?";
     const answers = { [question]: "Proceed with implementation" };
+    const answerSelections = { [question]: ["Proceed with implementation"] };
 
     const pendingAnswers = askUserQuestionManager.registerPending(workspaceId, toolCallId, [
       {
@@ -6707,7 +6708,12 @@ describe("WorkspaceService answerAskUserQuestion", () => {
     const logErrorSpy = spyOn(log, "error").mockImplementation(() => undefined);
 
     try {
-      const result = await workspaceService.answerAskUserQuestion(workspaceId, toolCallId, answers);
+      const result = await workspaceService.answerAskUserQuestion(
+        workspaceId,
+        toolCallId,
+        answers,
+        answerSelections
+      );
 
       expect(result.success).toBe(true);
       if (!result.success) {
@@ -6715,7 +6721,7 @@ describe("WorkspaceService answerAskUserQuestion", () => {
       }
 
       expect(result.data.handoffAgentId).toBeNull();
-      expect(await pendingAnswers).toEqual(answers);
+      expect(await pendingAnswers).toEqual({ answers, answerSelections });
       expect(logErrorSpy).toHaveBeenCalledWith(
         "Failed to resolve ask_user_question handoff target",
         expect.objectContaining({ workspaceId, toolCallId })

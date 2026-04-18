@@ -172,13 +172,83 @@ export type AskUserQuestionApprovalIntent = PlanExecutorRoutingTarget | "approve
 const ASK_USER_QUESTION_EXEC_KEYWORDS = new Set(["implement", "implementation", "execute"]);
 const ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS = new Set(["orchestrate", "orchestration"]);
 const ASK_USER_QUESTION_APPROVAL_KEYWORDS = new Set(["approve", "approved"]);
+const ASK_USER_QUESTION_NEGATION_PREFIXES = new Set([
+  "not",
+  "no",
+  "dont",
+  "do not",
+  "doesnt",
+  "does not",
+  "didnt",
+  "did not",
+]);
 
 function normalizeAskUserQuestionIntentText(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/'/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function hasNegatedAskUserQuestionIntent(args: {
+  answers: Record<string, string>;
+  answerSelections?: AskUserQuestionAnswerSelections | null;
+}): boolean {
+  const intentKeywords = new Set<string>([
+    ...ASK_USER_QUESTION_APPROVAL_KEYWORDS,
+    ...ASK_USER_QUESTION_EXEC_KEYWORDS,
+    ...ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS,
+  ]);
+
+  const hasNegatedIntentInText = (value: string): boolean => {
+    const normalized = normalizeAskUserQuestionIntentText(value);
+    if (!normalized) {
+      return false;
+    }
+
+    const tokens = normalized.split(/\s+/);
+    for (let i = 0; i < tokens.length; i += 1) {
+      const current = tokens[i];
+      const next = tokens[i + 1];
+      if (!current || !next) {
+        continue;
+      }
+
+      const currentAndNext = `${current} ${next}`;
+      const hasNegationPrefix =
+        ASK_USER_QUESTION_NEGATION_PREFIXES.has(current) ||
+        ASK_USER_QUESTION_NEGATION_PREFIXES.has(currentAndNext);
+      if (!hasNegationPrefix) {
+        continue;
+      }
+
+      const keywordToken = ASK_USER_QUESTION_NEGATION_PREFIXES.has(currentAndNext)
+        ? tokens[i + 2]
+        : next;
+      if (keywordToken && intentKeywords.has(keywordToken)) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  if (Object.values(args.answers).some(hasNegatedIntentInText)) {
+    return true;
+  }
+
+  const selectionRecord = args.answerSelections;
+  if (selectionRecord != null) {
+    for (const labels of Object.values(selectionRecord)) {
+      if (labels.some(hasNegatedIntentInText)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function collectAskUserQuestionIntentTokens(args: {
@@ -225,6 +295,10 @@ export function resolveAskUserQuestionApprovalIntent(args: {
   answers: Record<string, string>;
   answerSelections?: AskUserQuestionAnswerSelections | null;
 }): AskUserQuestionApprovalIntent | null {
+  if (hasNegatedAskUserQuestionIntent(args)) {
+    return null;
+  }
+
   const tokens = collectAskUserQuestionIntentTokens(args);
 
   const hasApprovalIntent = [...ASK_USER_QUESTION_APPROVAL_KEYWORDS].some((keyword) =>
