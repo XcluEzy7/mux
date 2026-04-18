@@ -1428,7 +1428,11 @@ export class ProviderModelFactory {
             return Err({ type: "api_key_not_found", provider: providerName });
           }
           const resolvedApiKey = await this.resolveApiKey(cloudCredentials.apiKey);
-          if (cloudCredentials.apiKey && isOpReference(cloudCredentials.apiKey) && !resolvedApiKey) {
+          if (
+            cloudCredentials.apiKey &&
+            isOpReference(cloudCredentials.apiKey) &&
+            !resolvedApiKey
+          ) {
             return Err({ type: "api_key_not_found", provider: providerName });
           }
           providerHeaders.Authorization = `Bearer ${resolvedApiKey ?? ""}`;

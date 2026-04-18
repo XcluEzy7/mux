@@ -1112,6 +1112,11 @@ export class WorkspaceStore {
     }
 
     this.ensureActiveOnChatSubscription();
+
+    if (this.activeWorkspaceId) {
+      void this.refreshOllamaCatalogsForWorkspace(client, this.activeWorkspaceId);
+    }
+
     void this.refreshProvidersConfig(client);
     this.subscribeToProvidersConfig(client);
   }
@@ -1152,7 +1157,15 @@ export class WorkspaceStore {
       }
 
       const results = await Promise.allSettled(refreshes);
-      if (results.every((result) => result.status === "fulfilled")) {
+      const refreshSucceeded = results.every(
+        (result) =>
+          result.status === "fulfilled" &&
+          typeof result.value === "object" &&
+          result.value !== null &&
+          "success" in result.value &&
+          result.value.success === true
+      );
+      if (refreshSucceeded) {
         this.refreshedOllamaWorkspaceIds.add(workspaceId);
       }
     } catch {

@@ -372,6 +372,23 @@ async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<stri
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
 
+  const createOllamaRefreshHandler = (provider: "ollama" | "ollama-cloud") => {
+    return async ({ context }: { context: ORPCContext }) => {
+      try {
+        const result = await refreshOllamaProviderCatalog({
+          provider,
+          config: context.config,
+          providerService: context.providerService,
+          opResolver: context.onePasswordService?.resolve.bind(context.onePasswordService),
+        });
+        return Ok(result.modelIds);
+      } catch (error) {
+        const providerLabel = provider === "ollama" ? "Ollama" : "Ollama Cloud";
+        return Err(`${providerLabel} model refresh failed: ${getErrorMessage(error)}`);
+      }
+    };
+  };
+
   return t.router({
     tokenizer: {
       countTokens: t
@@ -5048,37 +5065,13 @@ export const router = (authToken?: string) => {
       refreshModels: t
         .input(schemas.ollama.refreshModels.input)
         .output(schemas.ollama.refreshModels.output)
-        .handler(async ({ context }) => {
-          try {
-            const result = await refreshOllamaProviderCatalog({
-              provider: "ollama",
-              config: context.config,
-              providerService: context.providerService,
-              opResolver: context.onePasswordService?.resolve.bind(context.onePasswordService),
-            });
-            return Ok(result.modelIds);
-          } catch (error) {
-            return Err(`Ollama model refresh failed: ${getErrorMessage(error)}`);
-          }
-        }),
+        .handler(createOllamaRefreshHandler("ollama")),
     },
     ollamaCloud: {
       refreshModels: t
         .input(schemas.ollamaCloud.refreshModels.input)
         .output(schemas.ollamaCloud.refreshModels.output)
-        .handler(async ({ context }) => {
-          try {
-            const result = await refreshOllamaProviderCatalog({
-              provider: "ollama-cloud",
-              config: context.config,
-              providerService: context.providerService,
-              opResolver: context.onePasswordService?.resolve.bind(context.onePasswordService),
-            });
-            return Ok(result.modelIds);
-          } catch (error) {
-            return Err(`Ollama Cloud model refresh failed: ${getErrorMessage(error)}`);
-          }
-        }),
+        .handler(createOllamaRefreshHandler("ollama-cloud")),
     },
     synthetic: {
       refreshModels: t

@@ -291,7 +291,9 @@ describe("refreshConfiguredOllamaCatalogs", () => {
 
         if (url === `${OLLAMA_CLOUD_DEFAULT_BASE_URL}/show`) {
           const body = parseShowBody(init);
-          return Promise.resolve(jsonResponse({ details: { context_length: 4096 }, name: body.model }));
+          return Promise.resolve(
+            jsonResponse({ details: { context_length: 4096 }, name: body.model })
+          );
         }
 
         if (url === `${OLLAMA_LOCAL_DEFAULT_BASE_URL}/tags`) {

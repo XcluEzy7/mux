@@ -21,6 +21,12 @@ interface LoadMoreResponse {
   hasOlder: boolean;
 }
 
+interface OllamaRefreshResult {
+  success: boolean;
+  data?: string[];
+  error?: string;
+}
+
 interface OllamaRefreshClient {
   providers: {
     getConfig: () => Promise<{
@@ -29,10 +35,10 @@ interface OllamaRefreshClient {
     }>;
   };
   ollama: {
-    refreshModels: () => Promise<unknown>;
+    refreshModels: () => Promise<OllamaRefreshResult>;
   };
   ollamaCloud: {
-    refreshModels: () => Promise<unknown>;
+    refreshModels: () => Promise<OllamaRefreshResult>;
   };
 }
 
@@ -1348,11 +1354,11 @@ describe("WorkspaceStore", () => {
           ollama: { isConfigured: true, isEnabled: true },
         };
       });
-      const refreshModels = mock(() => Promise.resolve(undefined));
+      const refreshModels = mock(() => Promise.resolve({ success: true, data: [] }));
       const client: OllamaRefreshClient = {
         providers: { getConfig },
         ollama: { refreshModels },
-        ollamaCloud: { refreshModels: mock(() => Promise.resolve(undefined)) },
+        ollamaCloud: { refreshModels: mock(() => Promise.resolve({ success: true, data: [] })) },
       };
       const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
         client: OllamaRefreshClient,
@@ -1377,13 +1383,13 @@ describe("WorkspaceStore", () => {
           ollama: { isConfigured: true, isEnabled: true },
         })
       );
-      const refreshModels = mock<() => Promise<void>>()
+      const refreshModels = mock<() => Promise<OllamaRefreshResult>>()
         .mockRejectedValueOnce(new Error("boom"))
-        .mockResolvedValueOnce(undefined);
+        .mockResolvedValueOnce({ success: true, data: [] });
       const client: OllamaRefreshClient = {
         providers: { getConfig },
         ollama: { refreshModels },
-        ollamaCloud: { refreshModels: mock(() => Promise.resolve(undefined)) },
+        ollamaCloud: { refreshModels: mock(() => Promise.resolve({ success: true, data: [] })) },
       };
       const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
         client: OllamaRefreshClient,
@@ -1394,6 +1400,71 @@ describe("WorkspaceStore", () => {
       await refresh.call(store, client, "workspace-2");
 
       expect(refreshModels).toHaveBeenCalledTimes(2);
+    });
+
+    it("backfills refresh for active workspace when client connects", async () => {
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+
+      const workspaceId = "workspace-active-reconnect";
+      createAndAddWorkspace(store, workspaceId);
+
+      const getConfig = mock(() =>
+        Promise.resolve({
+          ollama: { isConfigured: true, isEnabled: true },
+        })
+      );
+      const refreshModels = mock(() => Promise.resolve({ success: true, data: [] }));
+
+      const reconnectClient = {
+        ...mockClient,
+        providers: {
+          getConfig,
+          // eslint-disable-next-line require-yield
+          onConfigChanged: mock(async function* () {
+            await new Promise(() => {
+              // Keep stream open for test lifetime.
+            });
+          }),
+        },
+        ollama: {
+          refreshModels,
+        },
+        ollamaCloud: {
+          refreshModels: mock(() => Promise.resolve({ success: true, data: [] })),
+        },
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(reconnectClient as any);
+
+      const refreshed = await waitUntil(() => refreshModels.mock.calls.length === 1);
+      expect(refreshed).toBe(true);
+    });
+
+    it("refreshes only ollama-cloud when local ollama is disabled", async () => {
+      const getConfig = mock(() =>
+        Promise.resolve({
+          ollama: { isConfigured: true, isEnabled: false },
+          "ollama-cloud": { isConfigured: true, isEnabled: true },
+        })
+      );
+      const refreshOllamaModels = mock(() => Promise.resolve({ success: true, data: [] }));
+      const refreshOllamaCloudModels = mock(() => Promise.resolve({ success: true, data: [] }));
+      const client: OllamaRefreshClient = {
+        providers: { getConfig },
+        ollama: { refreshModels: refreshOllamaModels },
+        ollamaCloud: { refreshModels: refreshOllamaCloudModels },
+      };
+      const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
+        client: OllamaRefreshClient,
+        workspaceId: string
+      ) => Promise<void>;
+
+      await refresh.call(store, client, "workspace-3");
+
+      expect(refreshOllamaCloudModels).toHaveBeenCalledTimes(1);
+      expect(refreshOllamaModels).not.toHaveBeenCalled();
     });
   });
 

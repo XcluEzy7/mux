@@ -433,13 +433,18 @@ export function ProvidersSection() {
   }, [api]);
   const refreshOllamaModels = useCallback(
     async (provider: "ollama" | "ollama-cloud") => {
+      if (!api) {
+        setOllamaModelsStatus((prev) => ({ ...prev, [provider]: "Mux API not connected." }));
+        return;
+      }
+
       setOllamaModelsLoading((prev) => ({ ...prev, [provider]: true }));
       setOllamaModelsStatus((prev) => ({ ...prev, [provider]: null }));
       try {
         const result =
           provider === "ollama"
-            ? await api!.ollama.refreshModels()
-            : await api!.ollamaCloud.refreshModels();
+            ? await api.ollama.refreshModels()
+            : await api.ollamaCloud.refreshModels();
         setOllamaModelsStatus((prev) => ({
           ...prev,
           [provider]: result.success ? `${result.data.length} models available` : result.error,
@@ -1620,7 +1625,7 @@ export function ProvidersSection() {
                               onClick={() => {
                                 void refreshOllamaModels(provider);
                               }}
-                              disabled={ollamaModelsLoading[provider] === true}
+                              disabled={!api || ollamaModelsLoading[provider] === true}
                             >
                               {ollamaModelsLoading[provider] ? "Refreshing..." : "Refresh models"}
                             </Button>
