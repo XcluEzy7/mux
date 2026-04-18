@@ -25,7 +25,7 @@ import type {
   WorkspaceStatsSnapshot,
   ServerAuthSession,
 } from "@/common/orpc/types";
-import type { ProjectGitStatusResult as ApiProjectGitStatusResult } from "@/common/orpc/schemas/api";
+import type { ProjectGitStatusResult as ApiProjectGitStatusResult, TailscaleSshConfig } from "@/common/orpc/schemas/api";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
@@ -555,6 +555,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let layoutPresets = initialLayoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
   let subagentAiDefaults = deriveSubagentAiDefaults();
+  let tailscaleSshConfigState: TailscaleSshConfig | null = null;
 
   const mockStats: ChatStats = {
     consumers: [],
@@ -634,8 +635,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
-      getTailscaleSsh: () => Promise.resolve(null),
-      setTailscaleSsh: () => Promise.resolve(undefined),
+      getTailscaleSsh: () => Promise.resolve(tailscaleSshConfigState),
+      setTailscaleSsh: (input: { config: TailscaleSshConfig | null }) => {
+        tailscaleSshConfigState = input.config;
+        return Promise.resolve(undefined);
+      },
       detectTailscale: () =>
         Promise.resolve({
           available: false,
