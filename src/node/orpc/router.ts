@@ -467,10 +467,8 @@ export const router = (authToken?: string) => {
           // In server mode, users copy the snippet from Settings — no filesystem access.
           const isElectron = "electron" in process.versions;
           if (isElectron) {
-            const {
-              ensureTailscaleSshConfig,
-              removeTailscaleSshConfig,
-            } = await import("@/node/runtime/tailscaleSshConfigWriter");
+            const { ensureTailscaleSshConfig, removeTailscaleSshConfig } =
+              await import("@/node/runtime/tailscaleSshConfigWriter");
             if (input.config?.enabled && input.config.sshHost) {
               await ensureTailscaleSshConfig({
                 sshHost: input.config.sshHost,
@@ -1887,6 +1885,12 @@ export const router = (authToken?: string) => {
         .output(schemas.codexOauth.disconnect.output)
         .handler(({ context }) => {
           return context.codexOauthService.disconnect();
+        }),
+      getAccountStatus: t
+        .input(schemas.codexOauth.getAccountStatus.input)
+        .output(schemas.codexOauth.getAccountStatus.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.getAccountStatus();
         }),
       completeDesktopFlowManually: t
         .input(schemas.codexOauth.completeDesktopFlowManually.input)

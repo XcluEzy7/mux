@@ -28,6 +28,8 @@ export const CODEX_OAUTH_TOKEN_URL = `${CODEX_OAUTH_ORIGIN}/oauth/token`;
 // Codex OAuth tokens are only valid against this ChatGPT backend.
 export const CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 
+// ChatGPT account usage/limit endpoint for Codex OAuth accounts.
+export const CODEX_OAUTH_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 // We request offline_access to receive refresh tokens.
 export const CODEX_OAUTH_SCOPE = "openid profile email offline_access";
 

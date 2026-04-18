@@ -11,6 +11,7 @@ import {
   CODEX_OAUTH_DEVICE_USERCODE_URL,
   CODEX_OAUTH_DEVICE_VERIFY_URL,
   CODEX_OAUTH_TOKEN_URL,
+  CODEX_OAUTH_WHAM_USAGE_URL,
 } from "@/common/constants/codexOAuth";
 import type { Config } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
@@ -32,6 +33,45 @@ import { getErrorMessage } from "@/common/utils/errors";
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;
 const COMPLETED_FLOW_TTL_MS = 60 * 1000;
+
+const ACCOUNT_STATUS_CACHE_TTL_MS = 45 * 1000;
+
+type CodexOauthAccountStatusState = "connected" | "disconnected" | "unsupported";
+type CodexOauthAccountStatusSource = "wham" | "response-headers";
+
+export interface CodexOauthRateLimitWindow {
+  usedPercent: number | null;
+  windowMinutes: number | null;
+  resetsAt: string | null;
+}
+
+export interface CodexOauthCreditsStatus {
+  hasCredits: boolean | null;
+  unlimited: boolean | null;
+  balance: number | null;
+}
+
+export interface CodexOauthAccountStatus {
+  state: CodexOauthAccountStatusState;
+  source: CodexOauthAccountStatusSource | null;
+  primaryWindow: CodexOauthRateLimitWindow;
+  secondaryWindow: CodexOauthRateLimitWindow;
+  credits: CodexOauthCreditsStatus;
+  fetchedAtMs: number | null;
+  message: string | null;
+}
+
+interface CodexOauthStatusCacheEntry {
+  status: CodexOauthAccountStatus;
+  fetchedAtMs: number;
+}
+
+interface ParsedCodexHeaderStatus {
+  hasSignal: boolean;
+  primaryWindow: CodexOauthRateLimitWindow;
+  secondaryWindow: CodexOauthRateLimitWindow;
+  credits: CodexOauthCreditsStatus;
+}
 
 interface DeviceFlow {
   flowId: string;
@@ -96,6 +136,210 @@ function isInvalidGrantError(errorText: string): boolean {
   return lower.includes("invalid_grant") || lower.includes("revoked");
 }
 
+function emptyRateLimitWindow(): CodexOauthRateLimitWindow {
+  return {
+    usedPercent: null,
+    windowMinutes: null,
+    resetsAt: null,
+  };
+}
+
+function emptyCreditsStatus(): CodexOauthCreditsStatus {
+  return {
+    hasCredits: null,
+    unlimited: null,
+    balance: null,
+  };
+}
+
+function disconnectedAccountStatus(): CodexOauthAccountStatus {
+  return {
+    state: "disconnected",
+    source: null,
+    primaryWindow: emptyRateLimitWindow(),
+    secondaryWindow: emptyRateLimitWindow(),
+    credits: emptyCreditsStatus(),
+    fetchedAtMs: null,
+    message: null,
+  };
+}
+
+function unsupportedAccountStatus(message: string): CodexOauthAccountStatus {
+  return {
+    state: "unsupported",
+    source: null,
+    primaryWindow: emptyRateLimitWindow(),
+    secondaryWindow: emptyRateLimitWindow(),
+    credits: emptyCreditsStatus(),
+    fetchedAtMs: Date.now(),
+    message,
+  };
+}
+
+function parseOptionalBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function parseOptionalTimestamp(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+
+  const numeric = parseOptionalNumber(value);
+  if (numeric !== null) {
+    const milliseconds = numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+    const date = new Date(milliseconds);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+
+  return null;
+}
+
+function parseRateLimitWindow(value: unknown): CodexOauthRateLimitWindow {
+  const empty = emptyRateLimitWindow();
+  if (!isPlainObject(value)) {
+    return empty;
+  }
+
+  return {
+    usedPercent:
+      parseOptionalNumber(value.used_percent) ??
+      parseOptionalNumber(value.usedPercent) ??
+      parseOptionalNumber(value.used_percentage) ??
+      parseOptionalNumber(value.usedPercentage) ??
+      parseOptionalNumber(value.used),
+    windowMinutes:
+      parseOptionalNumber(value.window_minutes) ??
+      parseOptionalNumber(value.windowMinutes) ??
+      parseOptionalNumber(value.window_mins) ??
+      parseOptionalNumber(value.windowMins),
+    resetsAt:
+      parseOptionalTimestamp(value.reset_at) ??
+      parseOptionalTimestamp(value.resets_at) ??
+      parseOptionalTimestamp(value.resetAt) ??
+      parseOptionalTimestamp(value.resetsAt),
+  };
+}
+
+function parseCreditsStatus(value: unknown): CodexOauthCreditsStatus {
+  const empty = emptyCreditsStatus();
+  if (!isPlainObject(value)) {
+    return empty;
+  }
+
+  return {
+    hasCredits:
+      parseOptionalBoolean(value.has_credits) ??
+      parseOptionalBoolean(value.hasCredits) ??
+      parseOptionalBoolean(value.has_credit),
+    unlimited: parseOptionalBoolean(value.unlimited),
+    balance: parseOptionalNumber(value.balance),
+  };
+}
+
+function parseCodexHeaderStatus(headers: Headers): ParsedCodexHeaderStatus {
+  const primaryWindow: CodexOauthRateLimitWindow = {
+    usedPercent: parseOptionalNumber(headers.get("x-codex-primary-used-percent")),
+    windowMinutes: parseOptionalNumber(headers.get("x-codex-primary-window-minutes")),
+    resetsAt: parseOptionalTimestamp(headers.get("x-codex-primary-reset-at")),
+  };
+
+  const secondaryWindow: CodexOauthRateLimitWindow = {
+    usedPercent: parseOptionalNumber(headers.get("x-codex-secondary-used-percent")),
+    windowMinutes: parseOptionalNumber(headers.get("x-codex-secondary-window-minutes")),
+    resetsAt: parseOptionalTimestamp(headers.get("x-codex-secondary-reset-at")),
+  };
+
+  const credits: CodexOauthCreditsStatus = {
+    hasCredits: parseOptionalBoolean(headers.get("x-codex-credits-has-credits")),
+    unlimited: parseOptionalBoolean(headers.get("x-codex-credits-unlimited")),
+    balance: parseOptionalNumber(headers.get("x-codex-credits-balance")),
+  };
+
+  const hasSignal =
+    primaryWindow.usedPercent !== null ||
+    primaryWindow.windowMinutes !== null ||
+    primaryWindow.resetsAt !== null ||
+    secondaryWindow.usedPercent !== null ||
+    secondaryWindow.windowMinutes !== null ||
+    secondaryWindow.resetsAt !== null ||
+    credits.hasCredits !== null ||
+    credits.unlimited !== null ||
+    credits.balance !== null;
+
+  return { hasSignal, primaryWindow, secondaryWindow, credits };
+}
+
+function mergeWindow(
+  preferred: CodexOauthRateLimitWindow,
+  fallback: CodexOauthRateLimitWindow
+): CodexOauthRateLimitWindow {
+  return {
+    usedPercent: preferred.usedPercent ?? fallback.usedPercent,
+    windowMinutes: preferred.windowMinutes ?? fallback.windowMinutes,
+    resetsAt: preferred.resetsAt ?? fallback.resetsAt,
+  };
+}
+
+function mergeCredits(
+  preferred: CodexOauthCreditsStatus,
+  fallback: CodexOauthCreditsStatus
+): CodexOauthCreditsStatus {
+  return {
+    hasCredits: preferred.hasCredits ?? fallback.hasCredits,
+    unlimited: preferred.unlimited ?? fallback.unlimited,
+    balance: preferred.balance ?? fallback.balance,
+  };
+}
+
+function hasAnyAccountStatusSignal(status: {
+  primaryWindow: CodexOauthRateLimitWindow;
+  secondaryWindow: CodexOauthRateLimitWindow;
+  credits: CodexOauthCreditsStatus;
+}): boolean {
+  return (
+    status.primaryWindow.usedPercent !== null ||
+    status.primaryWindow.windowMinutes !== null ||
+    status.primaryWindow.resetsAt !== null ||
+    status.secondaryWindow.usedPercent !== null ||
+    status.secondaryWindow.windowMinutes !== null ||
+    status.secondaryWindow.resetsAt !== null ||
+    status.credits.hasCredits !== null ||
+    status.credits.unlimited !== null ||
+    status.credits.balance !== null
+  );
+}
+
 export class CodexOauthService {
   private readonly desktopFlows = new OAuthFlowManager();
   private readonly deviceFlows = new Map<string, DeviceFlow>();
@@ -106,6 +350,10 @@ export class CodexOauthService {
   // Invalidated on every write (exchange, refresh, disconnect).
   private cachedAuth: CodexOauthAuth | null = null;
 
+  // In-memory cache for account status pulled from /wham/usage or response headers.
+  // Ephemeral only: never persisted to providers.json.
+  private cachedAccountStatus: CodexOauthStatusCacheEntry | null = null;
+
   constructor(
     private readonly config: Config,
     private readonly providerService: ProviderService,
@@ -115,6 +363,7 @@ export class CodexOauthService {
   async disconnect(): Promise<Result<void, string>> {
     // Clear stored ChatGPT OAuth tokens so Codex-only models are hidden again.
     this.cachedAuth = null;
+    this.cachedAccountStatus = null;
     return await this.providerService.setConfigValue("openai", ["codexOauth"], undefined);
   }
 
@@ -403,6 +652,164 @@ export class CodexOauthService {
     return Ok(refreshed.data);
   }
 
+  async getAccountStatus(): Promise<Result<CodexOauthAccountStatus, string>> {
+    const stored = this.readStoredAuth();
+    if (!stored) {
+      this.cachedAccountStatus = null;
+      return Ok(disconnectedAccountStatus());
+    }
+
+    const cached = this.cachedAccountStatus;
+    const canUseStatusCache = !isCodexOauthAuthExpired(stored);
+    if (
+      canUseStatusCache &&
+      cached &&
+      Date.now() - cached.fetchedAtMs <= ACCOUNT_STATUS_CACHE_TTL_MS
+    ) {
+      return Ok(cached.status);
+    }
+
+    const authResult = await this.getValidAuth();
+    if (!authResult.success) {
+      if (authResult.error.includes("not configured")) {
+        this.cachedAccountStatus = null;
+        return Ok(disconnectedAccountStatus());
+      }
+      return Err(`Codex OAuth account status request failed: ${authResult.error}`);
+    }
+
+    let response: Response;
+    try {
+      const headers = new Headers({
+        Accept: "application/json",
+        Authorization: `Bearer ${authResult.data.access}`,
+      });
+      if (authResult.data.accountId) {
+        headers.set("ChatGPT-Account-Id", authResult.data.accountId);
+      }
+
+      response = await fetch(CODEX_OAUTH_WHAM_USAGE_URL, { headers });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Codex OAuth account status request failed: ${message}`);
+    }
+
+    if (response.status === 404) {
+      const status = unsupportedAccountStatus("OpenAI account status endpoint is unavailable");
+      this.cachedAccountStatus = {
+        status,
+        fetchedAtMs: Date.now(),
+      };
+      return Ok(status);
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const prefix = `Codex OAuth account status request failed (${response.status})`;
+      return Err(errorText ? `${prefix}: ${errorText}` : prefix);
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      const headerOnlyStatus = this.statusFromHeaders(response.headers);
+      if (headerOnlyStatus) {
+        this.cachedAccountStatus = {
+          status: headerOnlyStatus,
+          fetchedAtMs: Date.now(),
+        };
+        return Ok(headerOnlyStatus);
+      }
+
+      const status = unsupportedAccountStatus("OpenAI account status payload was not valid JSON");
+      this.cachedAccountStatus = {
+        status,
+        fetchedAtMs: Date.now(),
+      };
+      return Ok(status);
+    }
+
+    if (!isPlainObject(body)) {
+      const headerOnlyStatus = this.statusFromHeaders(response.headers);
+      if (headerOnlyStatus) {
+        this.cachedAccountStatus = {
+          status: headerOnlyStatus,
+          fetchedAtMs: Date.now(),
+        };
+        return Ok(headerOnlyStatus);
+      }
+
+      const status = unsupportedAccountStatus(
+        "OpenAI account status payload format is unsupported"
+      );
+      this.cachedAccountStatus = {
+        status,
+        fetchedAtMs: Date.now(),
+      };
+      return Ok(status);
+    }
+
+    const rateLimit = isPlainObject(body.rate_limit) ? body.rate_limit : null;
+    const codeReviewRateLimit = isPlainObject(body.code_review_rate_limit)
+      ? body.code_review_rate_limit
+      : null;
+
+    const bodyPrimaryWindow = parseRateLimitWindow(rateLimit?.primary_window);
+    const bodySecondaryWindow = parseRateLimitWindow(
+      rateLimit?.secondary_window ?? codeReviewRateLimit?.primary_window
+    );
+    const bodyCredits = parseCreditsStatus(body.credits);
+    const headerStatus = parseCodexHeaderStatus(response.headers);
+
+    const merged = {
+      primaryWindow: mergeWindow(headerStatus.primaryWindow, bodyPrimaryWindow),
+      secondaryWindow: mergeWindow(headerStatus.secondaryWindow, bodySecondaryWindow),
+      credits: mergeCredits(headerStatus.credits, bodyCredits),
+    };
+
+    if (!hasAnyAccountStatusSignal(merged)) {
+      const status = unsupportedAccountStatus(
+        "OpenAI account status payload did not include usage fields"
+      );
+      this.cachedAccountStatus = {
+        status,
+        fetchedAtMs: Date.now(),
+      };
+      return Ok(status);
+    }
+
+    const status: CodexOauthAccountStatus = {
+      state: "connected",
+      source: headerStatus.hasSignal ? "response-headers" : "wham",
+      primaryWindow: merged.primaryWindow,
+      secondaryWindow: merged.secondaryWindow,
+      credits: merged.credits,
+      fetchedAtMs: Date.now(),
+      message: null,
+    };
+
+    this.cachedAccountStatus = {
+      status,
+      fetchedAtMs: Date.now(),
+    };
+
+    return Ok(status);
+  }
+
+  updateAccountStatusFromHeaders(headersInit: Headers | HeadersInit): void {
+    const headers = new Headers(headersInit);
+    const status = this.statusFromHeaders(headers);
+    if (!status) {
+      return;
+    }
+
+    this.cachedAccountStatus = {
+      status,
+      fetchedAtMs: Date.now(),
+    };
+  }
+
   async dispose(): Promise<void> {
     await this.desktopFlows.shutdownAll();
 
@@ -436,6 +843,7 @@ export class CodexOauthService {
     // We clear rather than set because setConfigValue may have side-effects (e.g. file-write
     // failures) and we want the next read to be authoritative.
     this.cachedAuth = null;
+    this.cachedAccountStatus = null;
     return result;
   }
 
@@ -603,6 +1011,23 @@ export class CodexOauthService {
       const message = getErrorMessage(error);
       return Err(`Codex OAuth refresh failed: ${message}`);
     }
+  }
+
+  private statusFromHeaders(headers: Headers): CodexOauthAccountStatus | null {
+    const parsed = parseCodexHeaderStatus(headers);
+    if (!parsed.hasSignal) {
+      return null;
+    }
+
+    return {
+      state: "connected",
+      source: "response-headers",
+      primaryWindow: parsed.primaryWindow,
+      secondaryWindow: parsed.secondaryWindow,
+      credits: parsed.credits,
+      fetchedAtMs: Date.now(),
+      message: null,
+    };
   }
 
   private async requestDeviceUserCode(): Promise<
