@@ -25,7 +25,10 @@ import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
-import { routePlanToExecutor } from "@/node/services/planExecutorRouter";
+import {
+  routePlanToExecutor,
+  type PlanExecutorRoutingTarget,
+} from "@/node/services/planExecutorRouter";
 import {
   coerceNonEmptyString,
   tryReadGitHeadCommitSha,
@@ -161,6 +164,92 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
 
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
+
+type AskUserQuestionAnswerSelections = Record<string, string[]>;
+
+export type AskUserQuestionApprovalIntent = PlanExecutorRoutingTarget | "approve";
+
+const ASK_USER_QUESTION_EXEC_KEYWORDS = new Set(["implement", "implementation", "execute"]);
+const ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS = new Set(["orchestrate", "orchestration"]);
+const ASK_USER_QUESTION_APPROVAL_KEYWORDS = new Set(["approve", "approved"]);
+
+function normalizeAskUserQuestionIntentText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function collectAskUserQuestionIntentTokens(args: {
+  answers: Record<string, string>;
+  answerSelections?: AskUserQuestionAnswerSelections | null;
+}): Set<string> {
+  const tokens = new Set<string>();
+
+  for (const answer of Object.values(args.answers)) {
+    const normalized = normalizeAskUserQuestionIntentText(answer);
+    if (!normalized) {
+      continue;
+    }
+
+    for (const token of normalized.split(/\s+/)) {
+      if (token.length > 0) {
+        tokens.add(token);
+      }
+    }
+  }
+
+  const selectionRecord = args.answerSelections;
+  if (selectionRecord != null) {
+    for (const labels of Object.values(selectionRecord)) {
+      for (const label of labels) {
+        const normalized = normalizeAskUserQuestionIntentText(label);
+        if (!normalized) {
+          continue;
+        }
+
+        for (const token of normalized.split(/\s+/)) {
+          if (token.length > 0) {
+            tokens.add(token);
+          }
+        }
+      }
+    }
+  }
+
+  return tokens;
+}
+
+export function resolveAskUserQuestionApprovalIntent(args: {
+  answers: Record<string, string>;
+  answerSelections?: AskUserQuestionAnswerSelections | null;
+}): AskUserQuestionApprovalIntent | null {
+  const tokens = collectAskUserQuestionIntentTokens(args);
+
+  const hasApprovalIntent = [...ASK_USER_QUESTION_APPROVAL_KEYWORDS].some((keyword) =>
+    tokens.has(keyword)
+  );
+  if (!hasApprovalIntent) {
+    // Execution intent keywords are only meaningful after explicit approval.
+    // This avoids false-positive handoffs for responses like "don't execute yet".
+    return null;
+  }
+
+  const hasExecIntent = [...ASK_USER_QUESTION_EXEC_KEYWORDS].some((keyword) => tokens.has(keyword));
+  if (hasExecIntent) {
+    return "exec";
+  }
+
+  const hasOrchestratorIntent = [...ASK_USER_QUESTION_ORCHESTRATOR_KEYWORDS].some((keyword) =>
+    tokens.has(keyword)
+  );
+  if (hasOrchestratorIntent) {
+    return "orchestrator";
+  }
+
+  return "approve";
+}
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -652,6 +741,57 @@ export class TaskService {
       });
       return false;
     }
+  }
+
+  async resolveAskUserQuestionHandoffTarget(args: {
+    workspaceId: string;
+    answers: Record<string, string>;
+    answerSelections?: Record<string, string[]> | null;
+  }): Promise<"exec" | "orchestrator" | null> {
+    assert(
+      args.workspaceId.length > 0,
+      "resolveAskUserQuestionHandoffTarget: workspaceId must be non-empty"
+    );
+
+    const approvalIntent = resolveAskUserQuestionApprovalIntent({
+      answers: args.answers,
+      answerSelections: args.answerSelections,
+    });
+    if (!approvalIntent) {
+      return null;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, args.workspaceId);
+    if (!entry) {
+      log.warn("ask_user_question handoff routing skipped because workspace was not found", {
+        workspaceId: args.workspaceId,
+      });
+      return null;
+    }
+
+    const routing: PlanSubagentExecutorRouting =
+      approvalIntent === "approve"
+        ? ((cfg.taskSettings ?? DEFAULT_TASK_SETTINGS).planSubagentExecutorRouting ?? "exec")
+        : approvalIntent;
+
+    return this.resolvePlanAutoHandoffTargetAgentId({
+      workspaceId: args.workspaceId,
+      entry: {
+        projectPath: entry.projectPath,
+        workspace: {
+          id: entry.workspace.id,
+          name: entry.workspace.name,
+          path: entry.workspace.path,
+          runtimeConfig: entry.workspace.runtimeConfig,
+          taskModelString: entry.workspace.taskModelString,
+        },
+      },
+      routing,
+      // ask_user_question follows plan handoff behavior, but there's no guaranteed
+      // on-disk plan source for approval prompts, so auto-routing falls back to exec.
+      planContent: null,
+    });
   }
 
   private async resolvePlanAutoHandoffTargetAgentId(args: {

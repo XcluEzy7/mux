@@ -32,6 +32,10 @@ import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
 import { detectTailscale } from "@/node/services/tailscaleDetector";
+import {
+  ensureTailscaleSshConfig,
+  removeTailscaleSshConfig,
+} from "@/node/runtime/tailscaleSshConfigWriter";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -3326,14 +3330,15 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
-            input.answers
+            input.answers,
+            input.answerSelections
           );
 
           if (!result.success) {
             return { success: false, error: result.error };
           }
 
-          return { success: true, data: undefined };
+          return { success: true, data: result.data };
         }),
       answerDelegatedToolCall: t
         .input(schemas.workspace.answerDelegatedToolCall.input)

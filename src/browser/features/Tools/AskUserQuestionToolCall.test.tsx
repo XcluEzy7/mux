@@ -26,8 +26,14 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-const answerAskUserQuestion = mock((_input: unknown) =>
-  Promise.resolve({ success: true as const, data: undefined })
+interface AnswerAskUserQuestionResult {
+  success: true;
+  data: { handoffAgentId: "exec" | "orchestrator" | null };
+}
+
+const answerAskUserQuestion = mock(
+  (_input: unknown): Promise<AnswerAskUserQuestionResult> =>
+    Promise.resolve({ success: true, data: { handoffAgentId: null } })
 );
 
 const resumeStream = mock((_input: unknown) =>
@@ -49,6 +55,16 @@ const setAutoRetryEnabled = mock((input: unknown) => {
     },
   });
 });
+
+const getSendOptionsFromStorage = mock(() => ({
+  model: "openai:gpt-4o-mini",
+  agentId: "plan",
+  thinkingLevel: "off",
+}));
+
+void mock.module("@/browser/utils/messages/sendOptions", () => ({
+  getSendOptionsFromStorage,
+}));
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
@@ -90,6 +106,7 @@ describe("AskUserQuestionToolCall", () => {
     answerAskUserQuestion.mockClear();
     resumeStream.mockClear();
     setAutoRetryEnabled.mockClear();
+    getSendOptionsFromStorage.mockClear();
   });
 
   afterEach(() => {
@@ -188,6 +205,83 @@ describe("AskUserQuestionToolCall", () => {
     });
   });
 
+  test("routes resume to exec when answer response returns exec handoff", async () => {
+    answerAskUserQuestion.mockImplementationOnce((_input: unknown) =>
+      Promise.resolve({ success: true as const, data: { handoffAgentId: "exec" as const } })
+    );
+
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-exec"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    await waitFor(() => {
+      expect(resumeStream).toHaveBeenCalledTimes(1);
+    });
+
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "exec" },
+    });
+  });
+
+  test("routes resume to orchestrator when answer response returns orchestrator handoff", async () => {
+    answerAskUserQuestion.mockImplementationOnce((_input: unknown) =>
+      Promise.resolve({ success: true as const, data: { handoffAgentId: "orchestrator" as const } })
+    );
+
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-orchestrator"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    await waitFor(() => {
+      expect(resumeStream).toHaveBeenCalledTimes(1);
+    });
+
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "orchestrator" },
+    });
+  });
+
+  test("keeps current send options when answer response has no handoff target", async () => {
+    const view = render(
+      <AskUserQuestionToolCall
+        args={{ questions: [], answers: {} }}
+        result={null}
+        status="executing"
+        toolCallId="ask-no-handoff"
+        workspaceId="ws-ask"
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Submit answers" }));
+
+    await waitFor(() => {
+      expect(resumeStream).toHaveBeenCalledTimes(1);
+    });
+
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws-ask",
+      options: { agentId: "plan" },
+    });
+  });
+
   test("rolls back temporary retry enable when resume reports not started", async () => {
     resumeStream.mockImplementationOnce((_input: unknown) =>
       Promise.resolve({ success: true as const, data: { started: false } })
@@ -222,7 +316,7 @@ describe("AskUserQuestionToolCall", () => {
   });
 
   test("restores auto-retry even when unmounted before async resume setup finishes", async () => {
-    const answerDeferred = createDeferred<{ success: true; data: undefined }>();
+    const answerDeferred = createDeferred<AnswerAskUserQuestionResult>();
     const resumeDeferred = createDeferred<{ success: true; data: { started: boolean } }>();
 
     answerAskUserQuestion.mockImplementationOnce((_input: unknown) => answerDeferred.promise);
@@ -243,7 +337,7 @@ describe("AskUserQuestionToolCall", () => {
     // Simulate workspace switch/removal before async setup finishes.
     view.unmount();
 
-    answerDeferred.resolve({ success: true, data: undefined });
+    answerDeferred.resolve({ success: true, data: { handoffAgentId: null } });
     await waitFor(() => {
       expect(setAutoRetryEnabled).toHaveBeenCalledTimes(2);
     });

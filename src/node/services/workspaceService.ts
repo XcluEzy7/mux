@@ -5867,12 +5867,34 @@ export class WorkspaceService extends EventEmitter {
   async answerAskUserQuestion(
     workspaceId: string,
     toolCallId: string,
-    answers: Record<string, string>
-  ): Promise<Result<void>> {
+    answers: Record<string, string>,
+    answerSelections?: Record<string, string[]> | null
+  ): Promise<Result<{ handoffAgentId: "exec" | "orchestrator" | null }>> {
+    const resolveHandoffAgentId = async (): Promise<"exec" | "orchestrator" | null> => {
+      try {
+        return (
+          (await this.taskService?.resolveAskUserQuestionHandoffTarget({
+            workspaceId,
+            answers,
+            answerSelections,
+          })) ?? null
+        );
+      } catch (handoffError) {
+        // The answer has already been accepted/committed by this point, so handoff
+        // target resolution must be best-effort and never fail the overall request.
+        log.error("Failed to resolve ask_user_question handoff target", {
+          workspaceId,
+          toolCallId,
+          error: handoffError,
+        });
+        return null;
+      }
+    };
+
     try {
       // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
       askUserQuestionManager.answer(workspaceId, toolCallId, answers);
-      return Ok(undefined);
+      return Ok({ handoffAgentId: await resolveHandoffAgentId() });
     } catch (error) {
       // Fallback path: app restart (or other process death) means the in-memory
       // AskUserQuestionManager has no pending entry anymore.
@@ -5923,6 +5945,7 @@ export class WorkspaceService extends EventEmitter {
                 ask_user_question: {
                   questions: parsedArgs.data.questions,
                   answers,
+                  answerSelections,
                 },
               },
             };
@@ -5972,7 +5995,7 @@ export class WorkspaceService extends EventEmitter {
               timestamp: Date.now(),
             });
 
-            return Ok(undefined);
+            return Ok({ handoffAgentId: await resolveHandoffAgentId() });
           }
         }
 
@@ -6040,7 +6063,7 @@ export class WorkspaceService extends EventEmitter {
           timestamp: Date.now(),
         });
 
-        return Ok(undefined);
+        return Ok({ handoffAgentId: await resolveHandoffAgentId() });
       } catch (innerError) {
         const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);

@@ -91,6 +91,9 @@ export const AskUserQuestionQuestionSchema = z
 const AskUserQuestionUiOnlySchema = z.object({
   questions: z.array(AskUserQuestionQuestionSchema),
   answers: z.record(z.string(), z.string()),
+  // Preserves checkbox selections as option labels so backend routing can distinguish
+  // explicit approval intents (e.g. implement/orchestrate) from free-form "other" text.
+  answerSelections: z.record(z.string(), z.array(z.string())).nullish(),
 });
 
 const ToolOutputUiOnlySchema = z.object({
