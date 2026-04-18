@@ -43,8 +43,14 @@ import {
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { formatSyntheticRenewal, useSyntheticQuota } from "@/browser/hooks/useSyntheticQuota";
+import {
+  formatCodexOauthUsedPercent,
+  isCodexOauthAccountLimited,
+  useCodexOauthAccountStatus,
+} from "@/browser/hooks/useCodexOauthAccountStatus";
 
 import { useRouting } from "@/browser/hooks/useRouting";
+import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { Button } from "@/browser/components/Button/Button";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
@@ -91,6 +97,60 @@ interface OAuthMessage {
 function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
   return urlToken?.length ? urlToken : getStoredAuthToken();
+}
+
+function formatCodexOauthWindow(
+  window: { usedPercent: number | null; windowMinutes: number | null } | null | undefined
+): string {
+  if (window?.usedPercent == null) {
+    return "—";
+  }
+
+  const windowMinutesSuffix = window.windowMinutes != null ? ` · ${window.windowMinutes}m` : "";
+  return `${formatCodexOauthUsedPercent(window.usedPercent)}${windowMinutesSuffix}`;
+}
+
+function formatCodexOauthCredits(
+  credits:
+    | {
+        hasCredits: boolean | null;
+        unlimited: boolean | null;
+        balance: number | null;
+      }
+    | null
+    | undefined
+): string {
+  if (!credits) {
+    return "—";
+  }
+
+  if (credits.unlimited === true) {
+    return "Unlimited";
+  }
+
+  if (credits.hasCredits === false) {
+    return "No credits";
+  }
+
+  if (credits.balance != null) {
+    return String(credits.balance);
+  }
+
+  return "—";
+}
+
+function formatCodexOauthStatusSource(
+  source: "wham" | "response-headers" | null | undefined
+): string {
+  if (source === "wham") {
+    return "OpenAI usage endpoint";
+  }
+
+  if (source === "response-headers") {
+    return "Response headers";
+  }
+
+  return "—";
 }
 
 interface FieldConfig {
@@ -353,6 +413,13 @@ export function ProvidersSection() {
     refresh: refreshSyntheticQuota,
   } = useSyntheticQuota();
 
+  const {
+    data: codexOauthAccountStatus,
+    error: codexOauthAccountError,
+    isLoading: codexOauthAccountLoading,
+    refresh: refreshCodexOauthAccountStatus,
+  } = useCodexOauthAccountStatus();
+
   const routing = useRouting();
 
   const providerGroups = useMemo(() => {
@@ -425,6 +492,18 @@ export function ProvidersSection() {
   const codexOauthDefaultAuth =
     config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
+
+  const codexOauthAccountIsLimited = isCodexOauthAccountLimited(codexOauthAccountStatus);
+  const codexOauthAccountLimitMessage =
+    codexOauthAccountStatus?.state === "connected" &&
+    codexOauthAccountStatus.credits.unlimited !== true
+      ? codexOauthAccountStatus.credits.hasCredits === false
+        ? "No ChatGPT credits are available for Codex usage."
+        : (codexOauthAccountStatus.primaryWindow.usedPercent ?? 0) >= 100 ||
+            (codexOauthAccountStatus.secondaryWindow.usedPercent ?? 0) >= 100
+          ? "Codex usage limit is currently reached for one of your windows."
+          : null
+      : null;
 
   const codexOauthLoginInProgress =
     codexOauthStatus === "starting" || codexOauthStatus === "waiting";
@@ -504,6 +583,7 @@ export function ProvidersSection() {
         setCodexOauthDeviceFlow(null);
         setCodexOauthAuthorizeUrl(null);
         await refresh();
+        await refreshCodexOauthAccountStatus();
         return;
       }
 
@@ -550,6 +630,7 @@ export function ProvidersSection() {
       setCodexOauthStatus("idle");
       setCodexOauthDesktopFlowId(null);
       await refresh();
+      await refreshCodexOauthAccountStatus();
     } catch (err) {
       if (attempt !== codexOauthAttemptRef.current) {
         return;
@@ -624,6 +705,7 @@ export function ProvidersSection() {
       setCodexOauthDeviceFlow(null);
       setCodexOauthAuthorizeUrl(null);
       await refresh();
+      await refreshCodexOauthAccountStatus();
     } catch (err) {
       if (attempt !== codexOauthAttemptRef.current) {
         return;
@@ -673,6 +755,7 @@ export function ProvidersSection() {
       updateOptimistically("openai", { codexOauthSet: false });
       setCodexOauthStatus("idle");
       await refresh();
+      await refreshCodexOauthAccountStatus();
     } catch (err) {
       if (attempt !== codexOauthAttemptRef.current) {
         return;
@@ -1120,6 +1203,26 @@ export function ProvidersSection() {
     syntheticQuotaError,
     refreshSyntheticQuota,
   ]);
+  useEffect(() => {
+    if (expandedProvider !== "openai") {
+      return;
+    }
+
+    // Fetch lazily when OpenAI is expanded. Avoid implicit retries after
+    // failures; users can explicitly retry with the Refresh button.
+    if (codexOauthAccountStatus || codexOauthAccountLoading || codexOauthAccountError) {
+      return;
+    }
+
+    void refreshCodexOauthAccountStatus();
+  }, [
+    expandedProvider,
+    codexOauthAccountError,
+    codexOauthAccountLoading,
+    codexOauthAccountStatus,
+    refreshCodexOauthAccountStatus,
+  ]);
+
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
@@ -2178,7 +2281,10 @@ export function ProvidersSection() {
                                         } else {
                                           setCodexOauthStatus("idle");
                                           setCodexOauthDesktopFlowId(null);
-                                          void refresh();
+                                          void Promise.all([
+                                            refresh(),
+                                            refreshCodexOauthAccountStatus(),
+                                          ]);
                                         }
                                       })
                                       .finally(() => {
@@ -2205,6 +2311,112 @@ export function ProvidersSection() {
                               </div>
                             </details>
                           )}
+
+                          <div className="border-border-light space-y-2 border-t pt-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <label className="text-foreground block text-xs font-medium">
+                                  Account status
+                                </label>
+                                <span className="text-muted text-xs">
+                                  {codexOauthAccountLoading && !codexOauthAccountStatus
+                                    ? "Loading account status..."
+                                    : codexOauthAccountStatus?.state === "connected"
+                                      ? codexOauthAccountIsLimited
+                                        ? "Connected (at limit)"
+                                        : "Connected"
+                                      : codexOauthAccountStatus?.state === "disconnected"
+                                        ? "Disconnected"
+                                        : codexOauthAccountStatus?.state === "unsupported"
+                                          ? "Unavailable"
+                                          : codexOauthAccountError
+                                            ? "Unavailable"
+                                            : "Not loaded"}
+                                </span>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  void refreshCodexOauthAccountStatus();
+                                }}
+                                disabled={!api || codexOauthAccountLoading}
+                              >
+                                {codexOauthAccountLoading ? "Refreshing..." : "Refresh"}
+                              </Button>
+                            </div>
+
+                            {codexOauthAccountLoading && !codexOauthAccountStatus && (
+                              <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                Fetching account status...
+                              </p>
+                            )}
+
+                            {codexOauthAccountStatus && (
+                              <>
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Primary window</span>
+                                  <span className="text-foreground font-mono text-xs">
+                                    {formatCodexOauthWindow(codexOauthAccountStatus.primaryWindow)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Secondary window</span>
+                                  <span className="text-foreground font-mono text-xs">
+                                    {formatCodexOauthWindow(
+                                      codexOauthAccountStatus.secondaryWindow
+                                    )}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Credits</span>
+                                  <span className="text-foreground text-xs">
+                                    {formatCodexOauthCredits(codexOauthAccountStatus.credits)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted text-xs">Source</span>
+                                  <span className="text-foreground text-xs">
+                                    {formatCodexOauthStatusSource(codexOauthAccountStatus.source)}
+                                  </span>
+                                </div>
+
+                                {codexOauthAccountStatus.fetchedAtMs != null && (
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted text-xs">Updated</span>
+                                    <span className="text-foreground text-xs">
+                                      {formatRelativeTime(codexOauthAccountStatus.fetchedAtMs)}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {codexOauthAccountStatus.state === "unsupported" && (
+                                  <p className="text-muted text-xs">
+                                    {codexOauthAccountStatus.message ??
+                                      "OpenAI account status is unavailable for this account."}
+                                  </p>
+                                )}
+
+                                {codexOauthAccountLimitMessage && (
+                                  <p className="text-warning text-xs">
+                                    {codexOauthAccountLimitMessage}
+                                  </p>
+                                )}
+                              </>
+                            )}
+
+                            {codexOauthAccountError && (
+                              <p className="text-destructive text-xs">
+                                {codexOauthAccountStatus
+                                  ? `Could not refresh account status: ${codexOauthAccountError}`
+                                  : `Could not load account status: ${codexOauthAccountError}`}
+                              </p>
+                            )}
+                          </div>
 
                           <div className="border-border-light space-y-2 border-t pt-3">
                             <div>
