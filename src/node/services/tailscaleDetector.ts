@@ -5,6 +5,7 @@ export interface TailscaleInfo {
   available: boolean; // Tailscale is running on this machine
   ip: string | null; // 100.x.x.x Tailscale IP
   hostname: string | null; // Tailscale machine name or FQDN
+  username: string | null; // SSH username on the machine running Mux
   sshEnabled: boolean; // Tailscale SSH server is active
   tailnet: string | null; // e.g., "tailnet123.ts.net"
 }
@@ -16,6 +17,7 @@ const UNAVAILABLE: TailscaleInfo = {
   available: false,
   ip: null,
   hostname: null,
+  username: null,
   sshEnabled: false,
   tailnet: null,
 };
@@ -25,6 +27,14 @@ const CACHE_TTL_MS = 60_000;
 let cachedResult: TailscaleInfo | null = null;
 let cacheExpiresAt = 0;
 let inFlightDetection: Promise<TailscaleInfo> | null = null;
+
+function getCurrentUsername(): string | null {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return process.env.USER ?? process.env.USERNAME ?? null;
+  }
+}
 
 /** Reset the detection cache. Primarily used in tests. */
 export function clearTailscaleCache(): void {
@@ -122,6 +132,7 @@ function detectFromNetworkInterfaces(): TailscaleInfo {
         available: true,
         ip: ipv4.address,
         hostname,
+        username: getCurrentUsername(),
         sshEnabled: false, // Cannot determine without CLI
         tailnet: isTsNet ? hostname.slice(hostname.indexOf(".") + 1) : null,
       };
@@ -139,6 +150,7 @@ function detectFromNetworkInterfaces(): TailscaleInfo {
           available: true,
           ip: addr.address,
           hostname,
+          username: getCurrentUsername(),
           sshEnabled: false,
           tailnet: isTsNet ? hostname.slice(hostname.indexOf(".") + 1) : null,
         };
@@ -241,6 +253,7 @@ async function detectTailscaleUncached(): Promise<TailscaleInfo> {
     available: true,
     ip,
     hostname,
+    username: getCurrentUsername(),
     sshEnabled,
     tailnet,
   };

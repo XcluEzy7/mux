@@ -22,8 +22,12 @@ export interface OpenInEditorResult {
   error?: string;
 }
 
-// Browser mode: window.api is not set (only exists in Electron via preload)
-const isBrowserMode = typeof window !== "undefined" && !window.api;
+// Browser mode: window.api is not set (only exists in Electron via preload).
+// Read this at call time so tests and late preload wiring cannot get stuck with
+// an import-time snapshot of the environment.
+function isBrowserMode(): boolean {
+  return typeof window !== "undefined" && !window.api;
+}
 
 // Helper for opening URLs - allows testing in Node environment
 function openUrl(url: string): void {
@@ -42,6 +46,11 @@ function isAbsolutePath(path: string): boolean {
 
 function normalizePathSeparators(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+function buildSshHostWithOptionalUsername(host: string, username?: string): string {
+  const trimmedUsername = username?.trim();
+  return trimmedUsername ? `${trimmedUsername}@${host}` : host;
 }
 
 function mapHostPathToContainerPath(options: {
@@ -217,14 +226,23 @@ export async function openInEditor(args: {
       if (editorConfig.editor === "zed" && args.runtimeConfig.port != null) {
         sshHost = sshHost + ":" + args.runtimeConfig.port;
       }
-    } else if (isBrowserMode && !isLocalhost(window.location.hostname)) {
+    } else if (isBrowserMode() && !isLocalhost(window.location.hostname)) {
       // Check Tailscale SSH first (only if experiment is enabled)
       const experimentEnabled = isExperimentEnabled(EXPERIMENT_IDS.TAILSCALE_SSH);
       if (experimentEnabled) {
         try {
           const tailscaleConfig = await args.api?.server.getTailscaleSsh();
           if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
-            sshHost = tailscaleConfig.sshHost;
+            const detectedInfo =
+              tailscaleConfig.username == null
+                ? await args.api?.server.detectTailscale({ force: false })
+                : null;
+            // Pass the remote account through the deep link so editors like Zed
+            // do not guess the client-side username for server connections.
+            sshHost = buildSshHostWithOptionalUsername(
+              tailscaleConfig.sshHost,
+              tailscaleConfig.username ?? detectedInfo?.username ?? undefined
+            );
           }
         } catch {
           // Fall through to the standard SSH host resolution below.
@@ -261,7 +279,7 @@ export async function openInEditor(args: {
   // Custom editor:
   // - Browser mode: can't spawn processes on the server
   // - Electron mode: spawn via backend API
-  if (isBrowserMode) {
+  if (isBrowserMode()) {
     return {
       success: false,
       error: "Custom editors are not supported in browser mode. Use VS Code, Cursor, or Zed.",

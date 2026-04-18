@@ -86,6 +86,7 @@ export const AppConfigOnDiskSchema = z
       .object({
         enabled: z.boolean().default(false),
         sshHost: z.string().optional(),
+        username: z.string().optional(),
         proxyCommand: z.boolean().default(true),
       })
       .optional(),
