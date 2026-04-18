@@ -109,7 +109,7 @@ async function fetchOllamaJson(
     });
 
     if (response.status === 401) {
-      throw new Error("Unauthorized — check your Ollama Cloud credentials");
+      throw new Error("Unauthorized");
     }
 
     if (!response.ok) {

@@ -1488,6 +1488,34 @@ describe("WorkspaceStore", () => {
       expect(refreshModels).toHaveBeenCalledTimes(2);
     });
 
+    it("retries when refresh settles with success false", async () => {
+      const getConfig = mock(() =>
+        Promise.resolve({
+          ollama: { isConfigured: true, isEnabled: true },
+        })
+      );
+      const refreshModels = mock<() => Promise<OllamaRefreshResult>>()
+        .mockResolvedValueOnce({ success: false, error: "temporary failure" })
+        .mockResolvedValueOnce({ success: true, data: [] });
+      const client: OllamaRefreshClient = {
+        providers: { getConfig },
+        ollama: { refreshModels },
+        ollamaCloud: { refreshModels: mock(() => Promise.resolve({ success: true, data: [] })) },
+      };
+      const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
+        client: OllamaRefreshClient,
+        workspaceId: string
+      ) => Promise<void>;
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(client as any);
+
+      await refresh.call(store, client, "workspace-2-success-false");
+      await refresh.call(store, client, "workspace-2-success-false");
+
+      expect(refreshModels).toHaveBeenCalledTimes(2);
+    });
+
     it("backfills refresh for active workspace when client connects", async () => {
       store.dispose();
       store = new WorkspaceStore(mockOnModelUsed);
