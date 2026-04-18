@@ -1132,7 +1132,7 @@ export class WorkspaceStore {
     try {
       const providersConfig = await client.providers.getConfig();
 
-      const refreshes: Array<Promise<unknown>> = [];
+      const refreshes: Array<Promise<{ success: boolean }>> = [];
       if (
         providersConfig.ollama?.isConfigured === true &&
         providersConfig.ollama?.isEnabled !== false
@@ -1147,12 +1147,13 @@ export class WorkspaceStore {
       }
 
       if (refreshes.length === 0) {
-        this.refreshedOllamaWorkspaceIds.add(workspaceId);
         return;
       }
 
       const results = await Promise.allSettled(refreshes);
-      if (results.every((result) => result.status === "fulfilled")) {
+      if (
+        results.every((result) => result.status === "fulfilled" && result.value.success === true)
+      ) {
         this.refreshedOllamaWorkspaceIds.add(workspaceId);
       }
     } catch {

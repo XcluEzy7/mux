@@ -97,7 +97,11 @@ function isGatewayModelAccessibleForConfig(
   gateway: string,
   modelId: string
 ): boolean {
-  return isGatewayModelAccessibleFromAuthoritativeCatalog(gateway, modelId, config?.[gateway]?.models);
+  return isGatewayModelAccessibleFromAuthoritativeCatalog(
+    gateway,
+    modelId,
+    config?.[gateway]?.models
+  );
 }
 
 function isAuthoritativeProviderModelAccessibleForConfig(
@@ -182,8 +186,8 @@ export function useModelsFromSettings() {
   });
 
   const customModels = useMemo(() => {
-    const next = filterHiddenModels(getCustomModels(config), hiddenModels).filter(
-      (modelString) => isAuthoritativeProviderModelAccessibleForConfig(config, modelString)
+    const next = filterHiddenModels(getCustomModels(config), hiddenModels).filter((modelString) =>
+      isAuthoritativeProviderModelAccessibleForConfig(config, modelString)
     );
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
   }, [config, hiddenModels, effectivePolicy]);
@@ -346,7 +350,13 @@ export function useModelsFromSettings() {
       const existingModels: ProviderModelEntry[] = providerConfig[provider]?.models ?? [];
       if (existingModels.some((entry) => getProviderModelEntryId(entry) === modelId)) return;
 
-      await api.providers.setModels({ provider, models: [...existingModels, modelId] });
+      const result = await api.providers.setModels({
+        provider,
+        models: [...existingModels, modelId],
+      });
+      if (!result.success) {
+        throw new Error(result.error);
+      }
       await refresh();
     };
 

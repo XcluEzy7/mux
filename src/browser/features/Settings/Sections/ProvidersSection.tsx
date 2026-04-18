@@ -416,10 +416,15 @@ export function ProvidersSection() {
   const [syntheticModelsStatus, setSyntheticModelsStatus] = useState<string | null>(null);
 
   const refreshSyntheticModels = useCallback(async () => {
+    if (!api) {
+      setSyntheticModelsStatus("Backend unavailable — cannot refresh models.");
+      return;
+    }
+
     setSyntheticModelsLoading(true);
     setSyntheticModelsStatus(null);
     try {
-      const result = await api!.synthetic.refreshModels();
+      const result = await api.synthetic.refreshModels();
       if (result.success) {
         setSyntheticModelsStatus(`${result.data.length} models available`);
       } else {
@@ -433,13 +438,21 @@ export function ProvidersSection() {
   }, [api]);
   const refreshOllamaModels = useCallback(
     async (provider: "ollama" | "ollama-cloud") => {
+      if (!api) {
+        setOllamaModelsStatus((prev) => ({
+          ...prev,
+          [provider]: "Backend unavailable — cannot refresh models.",
+        }));
+        return;
+      }
+
       setOllamaModelsLoading((prev) => ({ ...prev, [provider]: true }));
       setOllamaModelsStatus((prev) => ({ ...prev, [provider]: null }));
       try {
         const result =
           provider === "ollama"
-            ? await api!.ollama.refreshModels()
-            : await api!.ollamaCloud.refreshModels();
+            ? await api.ollama.refreshModels()
+            : await api.ollamaCloud.refreshModels();
         setOllamaModelsStatus((prev) => ({
           ...prev,
           [provider]: result.success ? `${result.data.length} models available` : result.error,
@@ -1620,7 +1633,7 @@ export function ProvidersSection() {
                               onClick={() => {
                                 void refreshOllamaModels(provider);
                               }}
-                              disabled={ollamaModelsLoading[provider] === true}
+                              disabled={!api || ollamaModelsLoading[provider] === true}
                             >
                               {ollamaModelsLoading[provider] ? "Refreshing..." : "Refresh models"}
                             </Button>
@@ -1848,7 +1861,7 @@ export function ProvidersSection() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => void refreshSyntheticModels()}
-                                disabled={syntheticModelsLoading}
+                                disabled={!api || syntheticModelsLoading}
                               >
                                 {syntheticModelsLoading ? "Refreshing..." : "Refresh Models"}
                               </Button>
