@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
+import { CODEX_OAUTH_WHAM_USAGE_URL } from "@/common/constants/codexOAuth";
 import type { Config, ProvidersConfig } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
@@ -40,6 +41,20 @@ function mockRefreshResponse(body: Record<string, unknown>, status = 200): Respo
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Build a mock fetch Response for /wham/usage. */
+function mockUsageResponse(
+  body: Record<string, unknown>,
+  opts?: { status?: number; headers?: Record<string, string> }
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: opts?.status ?? 200,
+    headers: {
+      "Content-Type": "application/json",
+      ...(opts?.headers ?? {}),
+    },
   });
 }
 
@@ -418,6 +433,170 @@ describe("CodexOauthService", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.accountId).toBe("acct_original");
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getAccountStatus
+  // -------------------------------------------------------------------------
+
+  describe("getAccountStatus", () => {
+    it("returns disconnected status when OAuth is not configured", async () => {
+      const result = await service.getAccountStatus();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.state).toBe("disconnected");
+        expect(result.data.source).toBeNull();
+      }
+    });
+
+    it("parses /wham/usage status and lets header values override body values", async () => {
+      deps.providersConfig = { openai: { codexOauth: validAuth({ accountId: "acct_live" }) } };
+
+      let requestedUrl = "";
+      let sentAccountId: string | null = null;
+      mockFetch((input, init) => {
+        requestedUrl =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        sentAccountId = new Headers(init?.headers).get("ChatGPT-Account-Id");
+
+        return Promise.resolve(
+          mockUsageResponse(
+            {
+              rate_limit: {
+                primary_window: {
+                  used_percent: 10,
+                  window_minutes: 300,
+                  reset_at: "2026-04-18T00:00:00.000Z",
+                },
+              },
+              credits: {
+                has_credits: false,
+                unlimited: false,
+                balance: 5,
+              },
+            },
+            {
+              headers: {
+                "x-codex-primary-used-percent": "77",
+                "x-codex-credits-balance": "125",
+                "x-codex-credits-has-credits": "true",
+              },
+            }
+          )
+        );
+      });
+
+      const result = await service.getAccountStatus();
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(requestedUrl).toBe(CODEX_OAUTH_WHAM_USAGE_URL);
+      expect(sentAccountId === "acct_live").toBe(true);
+      expect(result.data.state).toBe("connected");
+      expect(result.data.source).toBe("response-headers");
+      expect(result.data.primaryWindow.usedPercent).toBe(77);
+      expect(result.data.primaryWindow.windowMinutes).toBe(300);
+      expect(result.data.credits.balance).toBe(125);
+      expect(result.data.credits.hasCredits).toBe(true);
+    });
+
+    it("refreshes expired auth before fetching account status", async () => {
+      deps.providersConfig = { openai: { codexOauth: expiredAuth({ refresh: "rt_old" }) } };
+
+      // Pre-seed header cache; refresh should invalidate this stale snapshot before refetching.
+      service.updateAccountStatusFromHeaders({ "x-codex-primary-used-percent": "99" });
+      const calls: string[] = [];
+      mockFetch((input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        calls.push(url);
+
+        if (url.includes("/oauth/token")) {
+          return Promise.resolve(
+            mockRefreshResponse({
+              access_token: fakeJwt({ sub: "fresh" }),
+              refresh_token: "rt_new",
+              expires_in: 3600,
+            })
+          );
+        }
+
+        return Promise.resolve(
+          mockUsageResponse({
+            rate_limit: {
+              primary_window: {
+                used_percent: 5,
+              },
+            },
+          })
+        );
+      });
+
+      const result = await service.getAccountStatus();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.state).toBe("connected");
+        expect(result.data.primaryWindow.usedPercent).toBe(5);
+      }
+
+      expect(calls[0]).toContain("/oauth/token");
+      expect(calls[1]).toBe(CODEX_OAUTH_WHAM_USAGE_URL);
+    });
+
+    it("returns unsupported status for malformed payloads", async () => {
+      deps.providersConfig = { openai: { codexOauth: validAuth() } };
+
+      mockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ unexpected: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        )
+      );
+
+      const result = await service.getAccountStatus();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.state).toBe("unsupported");
+        expect(result.data.message).toContain("did not include usage fields");
+      }
+    });
+
+    it("clears cached account status on disconnect", async () => {
+      deps.providersConfig = { openai: { codexOauth: validAuth() } };
+      service.updateAccountStatusFromHeaders({ "x-codex-primary-used-percent": "61" });
+
+      const disconnectResult = await service.disconnect();
+      expect(disconnectResult.success).toBe(true);
+
+      const statusResult = await service.getAccountStatus();
+      expect(statusResult.success).toBe(true);
+      if (statusResult.success) {
+        expect(statusResult.data.state).toBe("disconnected");
+        expect(statusResult.data.primaryWindow.usedPercent).toBeNull();
+      }
+    });
+
+    it("updates cached status from x-codex response headers", async () => {
+      deps.providersConfig = { openai: { codexOauth: validAuth() } };
+
+      service.updateAccountStatusFromHeaders({
+        "x-codex-primary-used-percent": "61",
+        "x-codex-secondary-window-minutes": "10080",
+      });
+
+      const result = await service.getAccountStatus();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.state).toBe("connected");
+        expect(result.data.source).toBe("response-headers");
+        expect(result.data.primaryWindow.usedPercent).toBe(61);
+        expect(result.data.secondaryWindow.windowMinutes).toBe(10080);
       }
     });
   });

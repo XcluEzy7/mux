@@ -1262,7 +1262,11 @@ export class ProviderModelFactory {
                 nextInit = { ...(nextInit ?? {}), headers };
               }
 
-              return baseFetch(nextInput, nextInit);
+              const response = await baseFetch(nextInput, nextInit);
+              if (shouldRouteThroughCodexOauth) {
+                codexOauthService?.updateAccountStatusFromHeaders(response.headers);
+              }
+              return response;
             } catch (error) {
               // For normal OpenAI (API key) requests, fall back to the original fetch on unexpected errors.
               // For Codex OAuth routing, failures should surface (falling back would hit api.openai.com).

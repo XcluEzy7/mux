@@ -376,6 +376,28 @@ export const muxGovernorOauth = {
   },
 };
 
+const CodexOauthRateLimitWindowSchema = z.object({
+  usedPercent: z.number().nullable(),
+  windowMinutes: z.number().nullable(),
+  resetsAt: z.string().nullable(),
+});
+
+const CodexOauthCreditsStatusSchema = z.object({
+  hasCredits: z.boolean().nullable(),
+  unlimited: z.boolean().nullable(),
+  balance: z.number().nullable(),
+});
+
+const CodexOauthAccountStatusSchema = z.object({
+  state: z.enum(["connected", "disconnected", "unsupported"]),
+  source: z.enum(["wham", "response-headers"]).nullable(),
+  primaryWindow: CodexOauthRateLimitWindowSchema,
+  secondaryWindow: CodexOauthRateLimitWindowSchema,
+  credits: CodexOauthCreditsStatusSchema,
+  fetchedAtMs: z.number().nullable(),
+  message: z.string().nullable(),
+});
+
 // Codex OAuth (ChatGPT subscription auth)
 export const codexOauth = {
   startDesktopFlow: {
@@ -423,6 +445,10 @@ export const codexOauth = {
   disconnect: {
     input: z.void(),
     output: ResultSchema(z.void(), z.string()),
+  },
+  getAccountStatus: {
+    input: z.void(),
+    output: ResultSchema(CodexOauthAccountStatusSchema, z.string()),
   },
   completeDesktopFlowManually: {
     input: z.object({ flowId: z.string(), callbackUrl: z.string() }),

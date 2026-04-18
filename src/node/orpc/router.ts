@@ -1892,6 +1892,12 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.codexOauthService.disconnect();
         }),
+      getAccountStatus: t
+        .input(schemas.codexOauth.getAccountStatus.input)
+        .output(schemas.codexOauth.getAccountStatus.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.getAccountStatus();
+        }),
       completeDesktopFlowManually: t
         .input(schemas.codexOauth.completeDesktopFlowManually.input)
         .output(schemas.codexOauth.completeDesktopFlowManually.output)

@@ -332,6 +332,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
             {
               headers: {
                 "Content-Type": "application/json",
+                "x-codex-primary-used-percent": "42",
               },
             }
           )
@@ -345,8 +346,12 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         },
       });
 
+      const headerRefreshCalls: Headers[] = [];
       const codexOauthService = Object.create(CodexOauthService.prototype) as CodexOauthService;
       codexOauthService.getValidAuth = () => Promise.resolve(Ok(auth));
+      codexOauthService.updateAccountStatusFromHeaders = (headersInit) => {
+        headerRefreshCalls.push(new Headers(headersInit));
+      };
       factory.codexOauthService = codexOauthService;
 
       PROVIDER_REGISTRY.openai = async () => {
@@ -403,6 +408,8 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         const headers = new Headers(requests[0]?.init?.headers);
         expect(headers.get("authorization")).toBe("Bearer test-access-token");
         expect(headers.get("chatgpt-account-id")).toBe("test-account-id");
+        expect(headerRefreshCalls).toHaveLength(1);
+        expect(headerRefreshCalls[0]?.get("x-codex-primary-used-percent")).toBe("42");
         expect(headers.get("content-type")).toBe("application/json");
       } finally {
         PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
