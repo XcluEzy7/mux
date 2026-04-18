@@ -6,6 +6,7 @@ import { ProviderModelEntrySchema } from "./providerModelEntry";
 export const CacheTtlSchema = z.enum(["5m", "1h"]);
 export const ServiceTierSchema = z.enum(["auto", "default", "flex", "priority"]);
 export const CodexOauthDefaultAuthSchema = z.enum(["oauth", "apiKey"]);
+export const OllamaCompatibilitySchema = z.enum(["strict", "compatible"]);
 
 export const BaseProviderConfigSchema = z
   .object({
@@ -64,7 +65,11 @@ export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({
 
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;
 export const DeepSeekProviderConfigSchema = BaseProviderConfigSchema;
-export const OllamaProviderConfigSchema = BaseProviderConfigSchema;
+export const OllamaProviderConfigSchema = BaseProviderConfigSchema.extend({
+  organization: z.string().optional(),
+  project: z.string().optional(),
+  compatibility: OllamaCompatibilitySchema.optional(),
+});
 export const GitHubCopilotProviderConfigSchema = BaseProviderConfigSchema;
 
 export const ProvidersConfigSchema = z

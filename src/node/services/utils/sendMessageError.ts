@@ -63,6 +63,15 @@ export const formatSendMessageError = (
         errorType: "authentication",
       };
     }
+    case "provider_not_configured": {
+      const displayName = getProviderDisplayName(error.provider);
+      return {
+        message:
+          `${displayName} is not configured. ` +
+          `Configure it in Settings → Providers before sending messages.`,
+        errorType: "authentication",
+      };
+    }
     case "provider_disabled": {
       const displayName = getProviderDisplayName(error.provider);
       return {

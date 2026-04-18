@@ -103,6 +103,14 @@ function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function hasExplicitKeylessProviderConfig(config: ProviderConfigRaw): boolean {
+  return (
+    hasNonEmptyString(config.baseURL) ||
+    hasNonEmptyString(config.baseUrl) ||
+    (Array.isArray(config.models) && config.models.length > 0)
+  );
+}
+
 function hasCredentialPair(accessKeyId: unknown, secretAccessKey: unknown): boolean {
   return hasNonEmptyString(accessKeyId) && hasNonEmptyString(secretAccessKey);
 }
@@ -203,11 +211,10 @@ export function resolveProviderCredentials(
       : { isConfigured: false, missingRequirement: "coupon_code" };
   }
 
-  // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl or models
+  // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl/baseURL or models
   const def = PROVIDER_DEFINITIONS[provider];
   if (!def.requiresApiKey) {
-    const hasExplicitConfig = Boolean(config.baseUrl ?? (config.models?.length ?? 0) > 0);
-    return { isConfigured: hasExplicitConfig };
+    return { isConfigured: hasExplicitKeylessProviderConfig(config) };
   }
 
   // Standard API key providers: check config first, then apiKeyFile, then env vars

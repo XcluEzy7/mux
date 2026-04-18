@@ -100,6 +100,16 @@ describe("hasAnyConfiguredProvider", () => {
 
     expect(hasAnyConfiguredProvider(providers)).toBe(true);
   });
+
+  it("treats Ollama baseURL as explicit config", () => {
+    const providers: ProvidersConfig = {
+      ollama: {
+        baseURL: "http://localhost:11434/api",
+      },
+    };
+
+    expect(hasAnyConfiguredProvider(providers)).toBe(true);
+  });
 });
 
 describe("resolveProviderCredentials - apiKeyFile", () => {
@@ -189,5 +199,23 @@ describe("resolveProviderCredentials - apiKeyFile", () => {
     } finally {
       rmSync(homeKeyFile, { force: true });
     }
+  });
+});
+
+describe("resolveProviderCredentials - keyless providers", () => {
+  it("treats Ollama baseURL as explicit opt-in", () => {
+    const result = resolveProviderCredentials(
+      "ollama",
+      { baseURL: "http://localhost:11434/api" },
+      {}
+    );
+
+    expect(result).toEqual({ isConfigured: true });
+  });
+
+  it("does not treat bare Ollama defaults as configured", () => {
+    const result = resolveProviderCredentials("ollama", {}, {});
+
+    expect(result).toEqual({ isConfigured: false });
   });
 });

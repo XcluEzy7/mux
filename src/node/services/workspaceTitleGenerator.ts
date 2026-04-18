@@ -115,6 +115,8 @@ export function mapModelCreationError(
         authKind: "oauth_not_connected",
         provider: error.provider ?? provider,
       };
+    case "provider_not_configured":
+      return { type: "configuration", raw: "Provider not configured" };
     case "provider_disabled":
       return { type: "configuration", raw: "Provider disabled" };
     case "provider_not_supported":

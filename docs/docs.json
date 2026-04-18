@@ -130,6 +130,7 @@
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
+              "reference/codebase-cleanup-plan",
               "reference/future-build-improvements",
               "AGENTS"
             ]

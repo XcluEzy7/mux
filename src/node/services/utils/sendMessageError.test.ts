@@ -103,6 +103,17 @@ describe("formatSendMessageError", () => {
     expect(result.message).toContain("not supported");
   });
 
+  test("formats provider_not_configured as authentication", () => {
+    const result = formatSendMessageError({
+      type: "provider_not_configured",
+      provider: "ollama",
+    });
+
+    expect(result.errorType).toBe("authentication");
+    expect(result.message).toContain("Ollama");
+    expect(result.message).toContain("not configured");
+  });
+
   test("formats provider_disabled as authentication", () => {
     const result = formatSendMessageError({
       type: "provider_disabled",

@@ -57,6 +57,7 @@ export function isNonRetryableSendError(error: { type: string }): boolean {
   switch (error.type) {
     case "api_key_not_found": // Missing API key - user must configure
     case "oauth_not_connected": // Missing OAuth connection - user must connect/sign in
+    case "provider_not_configured": // Provider requires local/config setup before retrying
     case "provider_disabled": // Provider disabled in settings - user must re-enable
     case "provider_not_supported": // Unsupported provider - user must switch
     case "model_not_available": // Model missing from fetched provider catalog - user must refresh or switch

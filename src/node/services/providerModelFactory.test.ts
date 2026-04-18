@@ -158,6 +158,111 @@ describe("ProviderModelFactory.createModel", () => {
       }
     });
   });
+
+  it("returns provider_not_configured for Ollama without explicit opt-in", async () => {
+    await withTempConfig(async (_config, factory) => {
+      const result = await factory.createModel("ollama:llama3.1");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "provider_not_configured",
+          provider: "ollama",
+        });
+      }
+    });
+  });
+
+  it("passes normalized Ollama settings only, defaulting compatibility to strict", async () => {
+    await withTempConfig(async (config, factory) => {
+      let capturedOptions: Record<string, unknown> | undefined;
+      const originalOllamaRegistry = PROVIDER_REGISTRY.ollama;
+
+      config.saveProvidersConfig({
+        ollama: {
+          baseUrl: "http://localhost:11434/api",
+          organization: "team-local",
+          project: "mux",
+          models: ["llama3.1"],
+          enabled: true,
+        },
+      });
+
+      PROVIDER_REGISTRY.ollama = (async () => {
+        const module = await originalOllamaRegistry();
+        return {
+          ...module,
+          createOllama: ((options) => {
+            capturedOptions = options as Record<string, unknown>;
+            return ((modelId: string) => {
+              const stubModel = {
+                provider: "ollama.responses",
+                modelId,
+                specificationVersion: "v3",
+              };
+              return stubModel as unknown as never;
+            }) as unknown as ReturnType<typeof module.createOllama>;
+          }) as typeof module.createOllama,
+        };
+      }) as typeof PROVIDER_REGISTRY.ollama;
+
+      try {
+        const result = await factory.createModel("ollama:llama3.1");
+        expect(result.success).toBe(true);
+        expect(capturedOptions).toMatchObject({
+          baseURL: "http://localhost:11434/api",
+          organization: "team-local",
+          project: "mux",
+          compatibility: "strict",
+        });
+        expect(capturedOptions).not.toHaveProperty("models");
+        expect(capturedOptions).not.toHaveProperty("enabled");
+        expect(typeof capturedOptions?.fetch).toBe("function");
+      } finally {
+        PROVIDER_REGISTRY.ollama = originalOllamaRegistry;
+      }
+    });
+  });
+
+  it("honors explicit Ollama compatibility overrides", async () => {
+    await withTempConfig(async (config, factory) => {
+      let capturedOptions: Record<string, unknown> | undefined;
+      const originalOllamaRegistry = PROVIDER_REGISTRY.ollama;
+
+      config.saveProvidersConfig({
+        ollama: {
+          baseUrl: "http://localhost:11434/api",
+          compatibility: "compatible",
+        },
+      });
+
+      PROVIDER_REGISTRY.ollama = (async () => {
+        const module = await originalOllamaRegistry();
+        return {
+          ...module,
+          createOllama: ((options) => {
+            capturedOptions = options as Record<string, unknown>;
+            return ((modelId: string) => {
+              const stubModel = {
+                provider: "ollama.responses",
+                modelId,
+                specificationVersion: "v3",
+              };
+              return stubModel as unknown as never;
+            }) as unknown as ReturnType<typeof module.createOllama>;
+          }) as typeof module.createOllama,
+        };
+      }) as typeof PROVIDER_REGISTRY.ollama;
+
+      try {
+        const result = await factory.createModel("ollama:llama3.1");
+        expect(result.success).toBe(true);
+        expect(capturedOptions?.compatibility).toBe("compatible");
+      } finally {
+        PROVIDER_REGISTRY.ollama = originalOllamaRegistry;
+      }
+    });
+  });
 });
 
 describe("ProviderModelFactory GitHub Copilot", () => {

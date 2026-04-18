@@ -1762,7 +1762,8 @@ export class Config {
 //     "apiKey": "sk-xai-..."
 //   },
 //   "ollama": {
-//     "baseUrl": "http://localhost:11434/api"  // Optional - only needed for remote/custom URL
+//     "models": ["llama3.1"],                  // Optional explicit opt-in for local Ollama
+//     "baseUrl": "http://localhost:11434/api"  // Optional for remote/custom Ollama servers
 //   }
 // }
 ${jsonString}`;

@@ -36,6 +36,14 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
       };
     }
 
+    case "provider_not_configured": {
+      const displayName = getProviderDisplayName(error.provider);
+      return {
+        message: `${displayName} is not configured.`,
+        resolutionHint: `Open Settings → Providers and configure ${displayName}.`,
+      };
+    }
+
     case "provider_disabled": {
       const displayName = getProviderDisplayName(error.provider);
       return {

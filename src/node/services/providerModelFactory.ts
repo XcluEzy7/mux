@@ -484,6 +484,34 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
   return Object.assign(wrappedFetch, customFetch) as typeof fetch;
 }
 
+function getOllamaProviderSettings(providerConfig: ProviderConfig): Record<string, unknown> {
+  const settings: Record<string, unknown> = {};
+
+  if (typeof providerConfig.baseURL === "string" && providerConfig.baseURL.trim().length > 0) {
+    settings.baseURL = providerConfig.baseURL;
+  }
+
+  if (providerConfig.headers && Object.keys(providerConfig.headers).length > 0) {
+    settings.headers = providerConfig.headers;
+  }
+
+  if (
+    typeof providerConfig.organization === "string" &&
+    providerConfig.organization.trim().length > 0
+  ) {
+    settings.organization = providerConfig.organization;
+  }
+
+  if (typeof providerConfig.project === "string" && providerConfig.project.trim().length > 0) {
+    settings.project = providerConfig.project;
+  }
+
+  settings.compatibility =
+    providerConfig.compatibility === "compatible" ? "compatible" : "strict";
+
+  return settings;
+}
+
 // ---------------------------------------------------------------------------
 // Exported helpers (re-exported from aiService.ts for backward compatibility)
 // ---------------------------------------------------------------------------
@@ -1384,17 +1412,28 @@ export class ProviderModelFactory {
 
       // Handle Ollama provider
       if (providerName === "ollama") {
-        // Ollama doesn't require API key - it's a local service
+        // Ollama is keyless, but we still require explicit opt-in so routing/UI
+        // availability stays aligned with runtime behavior.
+        const creds = resolveProviderCredentials("ollama", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "provider_not_configured", provider: providerName });
+        }
+
         const baseFetch = getProviderFetch(providerConfig);
+        const requestScopedSettings =
+          muxProviderOptions?.ollama &&
+          typeof muxProviderOptions.ollama === "object" &&
+          !Array.isArray(muxProviderOptions.ollama)
+            ? muxProviderOptions.ollama
+            : undefined;
 
         // Lazy-load Ollama provider to reduce startup time
         const { createOllama } = await PROVIDER_REGISTRY.ollama();
         const providerFetch = baseFetch;
         const provider = createOllama({
-          ...providerConfig,
+          ...getOllamaProviderSettings(providerConfig),
+          ...(requestScopedSettings ?? {}),
           fetch: providerFetch,
-          // Use strict mode for better compatibility with Ollama API
-          compatibility: "strict",
         });
         return Ok(provider(modelId));
       }

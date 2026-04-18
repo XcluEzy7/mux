@@ -14,8 +14,8 @@ import type {
  * Discriminated union for all possible sendMessage errors.
  *
  * The frontend is responsible for language and messaging for api_key_not_found,
- * oauth_not_connected, provider_disabled, provider_not_supported, and
- * model_not_available errors.
+ * oauth_not_connected, provider_not_configured, provider_disabled,
+ * provider_not_supported, and model_not_available errors.
  * Other error types include details needed for display.
  */
 export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;

@@ -845,6 +845,14 @@ describe("isNonRetryableSendError", () => {
     expect(isNonRetryableSendError(error)).toBe(true);
   });
 
+  it("returns true for provider_not_configured error", () => {
+    const error: SendMessageError = {
+      type: "provider_not_configured",
+      provider: "ollama",
+    };
+    expect(isNonRetryableSendError(error)).toBe(true);
+  });
+
   it("returns true for provider_disabled error", () => {
     const error: SendMessageError = {
       type: "provider_disabled",
