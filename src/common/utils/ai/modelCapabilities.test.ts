@@ -33,6 +33,11 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
   });
 
+  it("reuses Ollama metadata aliases for Ollama Cloud models", () => {
+    const caps = getModelCapabilities("ollama-cloud:gpt-oss:20b");
+    expect(caps).not.toBeNull();
+  });
+
   it("infers PDF support for OpenAI vision models when models-extra omits the flag", () => {
     const caps = getModelCapabilities("openai:gpt-5.4");
     expect(caps).not.toBeNull();

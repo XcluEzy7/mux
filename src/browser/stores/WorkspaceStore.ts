@@ -526,6 +526,10 @@ export class WorkspaceStore {
   private providersConfigAppliedVersion = 0;
   /** Consecutive provider-config subscription/refresh failures (used for exponential backoff). */
   private providersConfigFailureStreak = 0;
+  // Best-effort per-workspace refresh bookkeeping for providers whose live catalogs can
+  // change outside the app. We only auto-refresh once per opened workspace; manual
+  // refresh in Settings remains the fallback when credentials/catalogs change mid-session.
+  private refreshedOllamaWorkspaceIds = new Set<string>();
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -1111,6 +1115,32 @@ export class WorkspaceStore {
     this.subscribeToProvidersConfig(client);
   }
 
+  private async refreshOllamaCatalogsForWorkspace(
+    client: RouterClient<AppRouter>,
+    workspaceId: string
+  ): Promise<void> {
+    if (this.refreshedOllamaWorkspaceIds.has(workspaceId)) {
+      return;
+    }
+
+    try {
+      const providersConfig = await client.providers.getConfig();
+      this.refreshedOllamaWorkspaceIds.add(workspaceId);
+
+      const refreshes: Array<Promise<unknown>> = [];
+      if (providersConfig.ollama?.isConfigured === true) {
+        refreshes.push(client.ollama.refreshModels());
+      }
+      if (providersConfig["ollama-cloud"]?.isConfigured === true) {
+        refreshes.push(client.ollamaCloud.refreshModels());
+      }
+
+      await Promise.allSettled(refreshes);
+    } catch {
+      // Best-effort only. Manual refresh in Settings remains the fallback.
+    }
+  }
+
   setActiveWorkspaceId(workspaceId: string | null): void {
     assert(
       workspaceId === null || (typeof workspaceId === "string" && workspaceId.length > 0),
@@ -1129,6 +1159,9 @@ export class WorkspaceStore {
     // session-usage-delta events that arrived while this workspace was inactive.
     if (workspaceId) {
       this.refreshSessionUsage(workspaceId);
+      if (this.client) {
+        void this.refreshOllamaCatalogsForWorkspace(this.client, workspaceId);
+      }
     }
 
     // Invalidate cached workspace state for both the old and new active

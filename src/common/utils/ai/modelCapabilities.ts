@@ -27,6 +27,8 @@ export type SupportedInputMediaType = "image" | "pdf" | "audio" | "video";
 const PROVIDER_KEY_ALIASES: Record<string, string> = {
   // GitHub Copilot keys in models.json use underscores for LiteLLM provider names.
   "github-copilot": "github_copilot",
+  // Ollama Cloud reuses Ollama's LiteLLM/provider metadata catalog.
+  "ollama-cloud": "ollama",
 };
 
 /**

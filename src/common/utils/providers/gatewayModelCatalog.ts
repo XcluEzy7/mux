@@ -9,9 +9,13 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   models: ProviderModelEntry[] | undefined
 ): boolean {
   // Most provider config model lists are user-managed custom entries, not exhaustive
-  // server catalogs. GitHub Copilot and Synthetic.new are exceptions because their
-  // model-refresh endpoints store the full catalog returned by the server.
-  if (provider !== "github-copilot" && provider !== "synthetic-new") {
+  // server catalogs. GitHub Copilot, Synthetic.new, and Ollama Cloud are exceptions
+  // because their refresh endpoints store the full catalog returned by the server.
+  if (
+    provider !== "github-copilot" &&
+    provider !== "synthetic-new" &&
+    provider !== "ollama-cloud"
+  ) {
     return true;
   }
 

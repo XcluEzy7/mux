@@ -208,6 +208,31 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     return []; // OAuth-based, no manual key entry
   }
 
+  if (provider === "ollama") {
+    return [
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "http://127.0.0.1:11434/api",
+        type: "text",
+        optional: true,
+      },
+    ];
+  }
+
+  if (provider === "ollama-cloud") {
+    return [
+      { key: "apiKey", label: "API Key", placeholder: "Enter Ollama API key", type: "secret" },
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "https://ollama.com/api",
+        type: "text",
+        optional: true,
+      },
+    ];
+  }
+
   // Default for most providers
   return [
     { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
@@ -379,6 +404,13 @@ export function ProvidersSection() {
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
 
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState<
+    Partial<Record<"ollama" | "ollama-cloud", boolean>>
+  >({});
+  const [ollamaModelsStatus, setOllamaModelsStatus] = useState<
+    Partial<Record<"ollama" | "ollama-cloud", string | null>>
+  >({});
+
   // Synthetic.new model refresh state
   const [syntheticModelsLoading, setSyntheticModelsLoading] = useState(false);
   const [syntheticModelsStatus, setSyntheticModelsStatus] = useState<string | null>(null);
@@ -399,6 +431,31 @@ export function ProvidersSection() {
       setSyntheticModelsLoading(false);
     }
   }, [api]);
+  const refreshOllamaModels = useCallback(
+    async (provider: "ollama" | "ollama-cloud") => {
+      setOllamaModelsLoading((prev) => ({ ...prev, [provider]: true }));
+      setOllamaModelsStatus((prev) => ({ ...prev, [provider]: null }));
+      try {
+        const result =
+          provider === "ollama"
+            ? await api!.ollama.refreshModels()
+            : await api!.ollamaCloud.refreshModels();
+        setOllamaModelsStatus((prev) => ({
+          ...prev,
+          [provider]: result.success ? `${result.data.length} models available` : result.error,
+        }));
+      } catch {
+        setOllamaModelsStatus((prev) => ({
+          ...prev,
+          [provider]: `Failed to refresh ${provider === "ollama" ? "Ollama" : "Ollama Cloud"} models`,
+        }));
+      } finally {
+        setOllamaModelsLoading((prev) => ({ ...prev, [provider]: false }));
+      }
+    },
+    [api]
+  );
+
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
@@ -423,9 +480,10 @@ export function ProvidersSection() {
   const routing = useRouting();
 
   const providerGroups = useMemo(() => {
-    const groups: Record<"direct" | "gateway" | "local", ProviderName[]> = {
+    const groups: Record<"direct" | "gateway" | "cloud" | "local", ProviderName[]> = {
       direct: [],
       gateway: [],
+      cloud: [],
       local: [],
     };
 
@@ -1405,6 +1463,7 @@ export function ProvidersSection() {
         [
           { key: "direct", label: "Direct Providers", providers: providerGroups.direct },
           { key: "gateway", label: "Gateways", providers: providerGroups.gateway },
+          { key: "cloud", label: "Cloud", providers: providerGroups.cloud },
           { key: "local", label: "Local", providers: providerGroups.local },
         ] as const
       ).map((section) => {
@@ -1539,6 +1598,37 @@ export function ProvidersSection() {
                               )
                               .join(", ")}
                           </span>
+                        </div>
+                      )}
+
+                      {(provider === "ollama" || provider === "ollama-cloud") && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <label className="text-foreground block text-xs font-medium">
+                                Model catalog
+                              </label>
+                              <span className="text-muted text-xs">
+                                {provider === "ollama"
+                                  ? "Refresh local Ollama models while preserving any unmatched custom entries."
+                                  : "Refresh the authoritative Ollama Cloud model catalog for this provider."}
+                              </span>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void refreshOllamaModels(provider);
+                              }}
+                              disabled={ollamaModelsLoading[provider] === true}
+                            >
+                              {ollamaModelsLoading[provider] ? "Refreshing..." : "Refresh models"}
+                            </Button>
+                          </div>
+
+                          {ollamaModelsStatus[provider] && (
+                            <p className="text-muted text-xs">{ollamaModelsStatus[provider]}</p>
+                          )}
                         </div>
                       )}
 

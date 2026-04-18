@@ -22,6 +22,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
+import { refreshConfiguredOllamaCatalogs } from "@/node/services/ollamaModelCatalog";
 import type { DevToolsService } from "@/node/services/devToolsService";
 
 export interface CoreServicesOptions {
@@ -64,6 +65,12 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     path.join(os.tmpdir(), "mux-bashes")
   );
   const sessionUsageService = new SessionUsageService(config, historyService);
+
+  void refreshConfiguredOllamaCatalogs({
+    config,
+    providerService,
+    opResolver: opts.opResolver,
+  });
 
   const aiService = new AIService(
     config,

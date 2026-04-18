@@ -1762,7 +1762,11 @@ export class Config {
 //     "apiKey": "sk-xai-..."
 //   },
 //   "ollama": {
-//     "baseUrl": "http://localhost:11434/api"  // Optional - only needed for remote/custom URL
+//     "baseUrl": "http://127.0.0.1:11434/api"  // Optional - only needed for remote/custom URL
+//   },
+//   "ollama-cloud": {
+//     "apiKey": "ollama_...",
+//     "baseUrl": "https://ollama.com/api"  // Optional - defaults to Ollama Cloud
 //   }
 // }
 ${jsonString}`;

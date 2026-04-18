@@ -238,6 +238,8 @@ export {
   policy,
   providers,
   ProvidersConfigMapSchema,
+  ollama,
+  ollamaCloud,
   server,
   ServerAuthSessionSchema,
   serverAuth,

@@ -2407,6 +2407,20 @@ export const desktop = {
   },
 };
 
+export const ollama = {
+  refreshModels: {
+    input: z.void(),
+    output: ResultSchema(z.array(z.string()), z.string()),
+  },
+};
+
+export const ollamaCloud = {
+  refreshModels: {
+    input: z.void(),
+    output: ResultSchema(z.array(z.string()), z.string()),
+  },
+};
+
 export const synthetic = {
   refreshModels: {
     input: z.void(),

@@ -60,6 +60,10 @@ describe("getModelStats", () => {
     expect(expectStats("ollama:gpt-oss:20b").max_input_tokens).toBeGreaterThan(0);
   });
 
+  test("aliases Ollama Cloud models onto the Ollama cloud metadata catalog", () => {
+    expect(expectStats("ollama-cloud:gpt-oss:20b").max_input_tokens).toBeGreaterThan(0);
+  });
+
   test("uses provider-specific GitHub Copilot metadata and defaults missing costs to zero", () => {
     const stats = expectStats("github-copilot:gpt-4.1");
     expect(stats.input_cost_per_token).toBe(0);

@@ -30,6 +30,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   openrouter: OpenRouterIcon,
   bedrock: AWSIcon,
   ollama: OllamaIcon,
+  "ollama-cloud": OllamaIcon,
   "mux-gateway": GatewayIcon,
   "github-copilot": GitHubIcon,
   "synthetic-new": SyntheticNewIcon,

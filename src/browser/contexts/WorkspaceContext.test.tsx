@@ -116,6 +116,33 @@ describe("WorkspaceContext", () => {
     expect(workspaceApi.onMetadata).toHaveBeenCalled();
   });
 
+  test("refreshes configured Ollama catalogs when a workspace is opened", async () => {
+    const workspaceId = "ws-ollama-refresh";
+
+    const { providers, ollama, ollamaCloud } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([createWorkspaceMetadata({ id: workspaceId })]),
+      },
+      providers: {
+        getConfig: () =>
+          Promise.resolve({
+            ollama: { apiKeySet: false, isEnabled: true, isConfigured: true },
+            "ollama-cloud": { apiKeySet: true, isEnabled: true, isConfigured: true },
+          }),
+      },
+    });
+
+    await setup();
+
+    act(() => {
+      getWorkspaceStoreRaw().setActiveWorkspaceId(workspaceId);
+    });
+
+    await waitFor(() => expect(providers.getConfig).toHaveBeenCalled());
+    await waitFor(() => expect(ollama.refreshModels).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(ollamaCloud.refreshModels).toHaveBeenCalledTimes(1));
+  });
+
   test("switches selection to parent when selected child workspace is deleted", async () => {
     const parentId = "ws-parent";
     const childId = "ws-child";
@@ -1668,6 +1695,9 @@ async function setupWithProjectContext() {
 interface MockAPIOptions {
   workspace?: RecursivePartial<APIClient["workspace"]>;
   projects?: RecursivePartial<APIClient["projects"]>;
+  providers?: RecursivePartial<APIClient["providers"]>;
+  ollama?: RecursivePartial<APIClient["ollama"]>;
+  ollamaCloud?: RecursivePartial<APIClient["ollamaCloud"]>;
   server?: RecursivePartial<APIClient["server"]>;
   localStorage?: Record<string, string>;
   locationHash?: string;
@@ -1806,6 +1836,36 @@ function createMockAPI(options: MockAPIOptions = {}) {
     },
   };
 
+  const providers = {
+    getConfig: mock(options.providers?.getConfig ?? (() => Promise.resolve({}))),
+    onConfigChanged: mock(
+      options.providers?.onConfigChanged ??
+        (async () => {
+          await Promise.resolve();
+          return (
+            // eslint-disable-next-line require-yield
+            (async function* () {
+              await Promise.resolve();
+            })() as unknown as Awaited<ReturnType<APIClient["providers"]["onConfigChanged"]>>
+          );
+        })
+    ),
+  };
+
+  const ollama = {
+    refreshModels: mock(
+      options.ollama?.refreshModels ??
+        (() => Promise.resolve({ success: true as const, data: [] as string[] }))
+    ),
+  };
+
+  const ollamaCloud = {
+    refreshModels: mock(
+      options.ollamaCloud?.refreshModels ??
+        (() => Promise.resolve({ success: true as const, data: [] as string[] }))
+    ),
+  };
+
   const server = {
     getLaunchProject: mock(options.server?.getLaunchProject ?? (() => Promise.resolve(null))),
   };
@@ -1818,9 +1878,12 @@ function createMockAPI(options: MockAPIOptions = {}) {
   currentClientMock = {
     workspace,
     projects,
+    providers,
+    ollama,
+    ollamaCloud,
     server,
     terminal,
   };
 
-  return { workspace, projects, window: happyWindow };
+  return { workspace, projects, providers, ollama, ollamaCloud, window: happyWindow };
 }

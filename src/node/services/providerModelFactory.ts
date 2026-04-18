@@ -53,6 +53,7 @@ import {
   normalizeGatewayStreamUsage,
   normalizeGatewayGenerateResult,
 } from "@/node/utils/gatewayStreamNormalization";
+import { normalizeOllamaApiBaseUrl } from "@/node/services/ollamaModelCatalog";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import packageJson from "../../../package.json";
 
@@ -1382,19 +1383,64 @@ export class ProviderModelFactory {
         return Ok(provider(modelId));
       }
 
-      // Handle Ollama provider
-      if (providerName === "ollama") {
-        // Ollama doesn't require API key - it's a local service
+      // Handle Ollama local/cloud providers
+      if (providerName === "ollama" || providerName === "ollama-cloud") {
         const baseFetch = getProviderFetch(providerConfig);
+        const configuredModelIds = getConfiguredProviderModelIds(providerConfig);
+        if (
+          providerName === "ollama-cloud" &&
+          configuredModelIds.length > 0 &&
+          !configuredModelIds.includes(modelId)
+        ) {
+          return Err({
+            type: "model_not_available",
+            provider: providerName,
+            modelId,
+          });
+        }
 
-        // Lazy-load Ollama provider to reduce startup time
-        const { createOllama } = await PROVIDER_REGISTRY.ollama();
-        const providerFetch = baseFetch;
+        const {
+          baseUrl,
+          baseURL,
+          headers,
+          apiKey: _apiKey,
+          apiKeyFile: _apiKeyFile,
+          ...restOptions
+        } = providerConfig as ProviderConfig & { headers?: Record<string, string> };
+        const normalizedBaseURL =
+          typeof baseURL === "string" || typeof baseUrl === "string"
+            ? normalizeOllamaApiBaseUrl(
+                (typeof baseURL === "string" && baseURL) ||
+                  (typeof baseUrl === "string" && baseUrl) ||
+                  undefined,
+                providerName
+              )
+            : providerName === "ollama-cloud"
+              ? normalizeOllamaApiBaseUrl(undefined, providerName)
+              : undefined;
+        const providerHeaders = { ...(headers ?? {}) };
+
+        if (providerName === "ollama-cloud") {
+          const creds = resolveProviderCredentials("ollama-cloud", providerConfig);
+          if (!creds.isConfigured) {
+            return Err({ type: "api_key_not_found", provider: providerName });
+          }
+          const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+          if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+            return Err({ type: "api_key_not_found", provider: providerName });
+          }
+          providerHeaders.Authorization = `Bearer ${resolvedApiKey ?? ""}`;
+        }
+
+        const { createOllama } = await PROVIDER_REGISTRY[providerName]();
         const provider = createOllama({
-          ...providerConfig,
-          fetch: providerFetch,
-          // Use strict mode for better compatibility with Ollama API
+          ...restOptions,
+          ...(normalizedBaseURL ? { baseURL: normalizedBaseURL } : {}),
+          ...(Object.keys(providerHeaders).length > 0 ? { headers: providerHeaders } : {}),
+          fetch: baseFetch,
           compatibility: "strict",
+          // Keep provider options scoped separately so local and cloud transports can diverge safely.
+          name: providerName,
         });
         return Ok(provider(modelId));
       }
@@ -1803,8 +1849,8 @@ export class ProviderModelFactory {
         return Ok(provider(modelId));
       }
       // Generic handler for simple providers (standard API key + factory pattern)
-      // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway,
-      // github-copilot) are handled explicitly above. New providers using the standard pattern need
+      // Providers with custom logic (anthropic, openai, xai, ollama, ollama-cloud, openrouter,
+      // bedrock, mux-gateway, github-copilot) are handled explicitly above. New providers using the standard pattern need
       // only be added to PROVIDER_DEFINITIONS - no code changes required here.
       const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
       if (providerDef) {

@@ -66,6 +66,19 @@ describe("gatewayModelCatalog", () => {
     ).toBe(true);
   });
 
+  test("treats Ollama Cloud catalogs as authoritative for direct model ids", () => {
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("ollama-cloud", "gpt-oss:20b", [
+        "gpt-oss:120b",
+      ])
+    ).toBe(false);
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("ollama-cloud", "gpt-oss:20b", [
+        "gpt-oss:20b",
+      ])
+    ).toBe(true);
+  });
+
   test("keeps the gateway-specific helper behavior aligned", () => {
     expect(
       isGatewayModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.4", [

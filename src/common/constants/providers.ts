@@ -24,6 +24,7 @@ export type ProviderName =
   | "github-copilot"
   | "bedrock"
   | "ollama"
+  | "ollama-cloud"
   | "synthetic-new";
 
 interface ProviderDefinition {
@@ -36,7 +37,7 @@ interface ProviderDefinition {
   /** Whether provider requires an API key (false for local services like Ollama) */
   requiresApiKey: boolean;
   /** Provider category for routing behavior */
-  kind: "direct" | "gateway" | "local";
+  kind: "direct" | "gateway" | "local" | "cloud";
   /** Gateways only: which direct providers this gateway routes to */
   routes?: ProviderName[];
   /** Transform canonical model identity into a gateway-specific model ID */
@@ -195,6 +196,13 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOllama",
     requiresApiKey: false, // Local service
     kind: "local",
+  },
+  "ollama-cloud": {
+    displayName: "Ollama Cloud",
+    import: () => import("ollama-ai-provider-v2"),
+    factoryName: "createOllama",
+    requiresApiKey: true,
+    kind: "cloud",
   },
   "synthetic-new": {
     displayName: "Synthetic",

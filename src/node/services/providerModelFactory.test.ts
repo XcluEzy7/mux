@@ -160,6 +160,28 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+it("rejects Ollama Cloud models missing from the authoritative catalog", async () => {
+  await withTempConfig(async (config, factory) => {
+    config.saveProvidersConfig({
+      "ollama-cloud": {
+        apiKey: "ollama_test_key",
+        models: ["gpt-oss:120b"],
+      },
+    });
+
+    const result = await factory.createModel("ollama-cloud:gpt-oss:20b");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toEqual({
+        type: "model_not_available",
+        provider: "ollama-cloud",
+        modelId: "gpt-oss:20b",
+      });
+    }
+  });
+});
+
 describe("ProviderModelFactory GitHub Copilot", () => {
   it("creates routed gpt-5.4 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {

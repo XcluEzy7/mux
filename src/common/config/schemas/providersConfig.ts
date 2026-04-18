@@ -65,6 +65,7 @@ export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;
 export const DeepSeekProviderConfigSchema = BaseProviderConfigSchema;
 export const OllamaProviderConfigSchema = BaseProviderConfigSchema;
+export const OllamaCloudProviderConfigSchema = BaseProviderConfigSchema;
 export const GitHubCopilotProviderConfigSchema = BaseProviderConfigSchema;
 
 export const ProvidersConfigSchema = z
@@ -78,6 +79,7 @@ export const ProvidersConfigSchema = z
     google: GoogleProviderConfigSchema.optional(),
     deepseek: DeepSeekProviderConfigSchema.optional(),
     ollama: OllamaProviderConfigSchema.optional(),
+    "ollama-cloud": OllamaCloudProviderConfigSchema.optional(),
     "github-copilot": GitHubCopilotProviderConfigSchema.optional(),
   })
   .catchall(BaseProviderConfigSchema);
@@ -92,6 +94,7 @@ export type MuxGatewayProviderConfig = z.infer<typeof MuxGatewayProviderConfigSc
 export type GoogleProviderConfig = z.infer<typeof GoogleProviderConfigSchema>;
 export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderConfigSchema>;
 export type OllamaProviderConfig = z.infer<typeof OllamaProviderConfigSchema>;
+export type OllamaCloudProviderConfig = z.infer<typeof OllamaCloudProviderConfigSchema>;
 export type GitHubCopilotProviderConfig = z.infer<typeof GitHubCopilotProviderConfigSchema>;
 
 export type ProvidersConfig = z.infer<typeof ProvidersConfigSchema>;
