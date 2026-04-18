@@ -179,6 +179,51 @@ describe("AgentModePicker", () => {
     });
   });
 
+  test("stays usable on phone-width viewports", async () => {
+    // Regression guard: creation mode should keep a usable picker at narrow widths.
+    globalThis.window.innerWidth = 320;
+    globalThis.window.dispatchEvent(new Event("resize"));
+
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("exec");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, CUSTOM_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByLabelText, getByText, getByTestId } = render(<Harness />);
+
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(getByText("Review")).toBeTruthy();
+    });
+
+    fireEvent.click(getByText("Review"));
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("review");
+    });
+  });
+
   test("selects a custom agent from the dropdown", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("exec");

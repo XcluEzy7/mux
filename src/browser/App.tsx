@@ -43,7 +43,7 @@ import {
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
@@ -1184,6 +1184,15 @@ function AppInner() {
                             metadata.id,
                             options?.pendingStreamModel ?? null
                           );
+
+                          // Once we transition into the new workspace-scoped AgentProvider,
+                          // refresh definitions so the picker reflects workspace agents
+                          // without requiring a manual page refresh.
+                          requestAnimationFrame(() => {
+                            window.dispatchEvent(
+                              createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED)
+                            );
+                          });
                         }
                       }
 
