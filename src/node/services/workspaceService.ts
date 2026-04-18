@@ -5867,12 +5867,23 @@ export class WorkspaceService extends EventEmitter {
   async answerAskUserQuestion(
     workspaceId: string,
     toolCallId: string,
-    answers: Record<string, string>
-  ): Promise<Result<void>> {
+    answers: Record<string, string>,
+    answerSelections?: Record<string, string[]> | null
+  ): Promise<Result<{ handoffAgentId: "exec" | "orchestrator" | null }>> {
+    const resolveHandoffAgentId = async (): Promise<"exec" | "orchestrator" | null> => {
+      return (
+        (await this.taskService?.resolveAskUserQuestionHandoffTarget({
+          workspaceId,
+          answers,
+          answerSelections,
+        })) ?? null
+      );
+    };
+
     try {
       // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
       askUserQuestionManager.answer(workspaceId, toolCallId, answers);
-      return Ok(undefined);
+      return Ok({ handoffAgentId: await resolveHandoffAgentId() });
     } catch (error) {
       // Fallback path: app restart (or other process death) means the in-memory
       // AskUserQuestionManager has no pending entry anymore.
@@ -5923,6 +5934,7 @@ export class WorkspaceService extends EventEmitter {
                 ask_user_question: {
                   questions: parsedArgs.data.questions,
                   answers,
+                  answerSelections,
                 },
               },
             };
@@ -5972,7 +5984,7 @@ export class WorkspaceService extends EventEmitter {
               timestamp: Date.now(),
             });
 
-            return Ok(undefined);
+            return Ok({ handoffAgentId: await resolveHandoffAgentId() });
           }
         }
 
@@ -6040,7 +6052,7 @@ export class WorkspaceService extends EventEmitter {
           timestamp: Date.now(),
         });
 
-        return Ok(undefined);
+        return Ok({ handoffAgentId: await resolveHandoffAgentId() });
       } catch (innerError) {
         const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);

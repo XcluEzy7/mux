@@ -103,6 +103,7 @@ export type SkillsCatalogReadToolResult =
 export interface AskUserQuestionUiOnlyPayload {
   questions: AskUserQuestionQuestion[];
   answers: Record<string, string>;
+  answerSelections?: Record<string, string[]>;
 }
 
 export interface FileEditUiOnlyPayload {

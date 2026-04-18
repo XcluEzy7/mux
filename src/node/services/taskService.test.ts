@@ -15,7 +15,11 @@ import {
   readSubagentReportArtifact,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
-import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
+import {
+  TaskService,
+  ForegroundWaitBackgroundedError,
+  resolveAskUserQuestionApprovalIntent,
+} from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
@@ -7571,6 +7575,42 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalledWith(childTwoId, true);
   });
 
+  test("resolveAskUserQuestionApprovalIntent prioritizes explicit execute keywords", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "approved",
+      },
+      answerSelections: {
+        decision: ["Execute now"],
+      },
+    });
+
+    expect(intent).toBe("exec");
+  });
+
+  test("resolveAskUserQuestionApprovalIntent matches orchestrator keywords from checked labels", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "Approved",
+      },
+      answerSelections: {
+        decision: ["Orchestration"],
+      },
+    });
+
+    expect(intent).toBe("orchestrator");
+  });
+
+  test("resolveAskUserQuestionApprovalIntent ignores unrelated answers", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "Need another revision first",
+      },
+    });
+
+    expect(intent).toBeNull();
+  });
+
   async function setupPlanModeStreamEndHarness(options?: {
     planSubagentExecutorRouting?: PlanSubagentExecutorRouting;
     planSubagentDefaultsToOrchestrator?: boolean;
@@ -7705,6 +7745,11 @@ describe("TaskService", () => {
         routing: PlanSubagentExecutorRouting;
         planContent: string | null;
       }) => Promise<"exec" | "orchestrator">;
+      resolveAskUserQuestionHandoffTarget: (args: {
+        workspaceId: string;
+        answers: Record<string, string>;
+        answerSelections?: Record<string, string[]> | null;
+      }) => Promise<"exec" | "orchestrator" | null>;
     };
 
     return {
@@ -8180,6 +8225,88 @@ describe("TaskService", () => {
 
     expect(targetAgentId).toBe("exec");
     expect(createModel).toHaveBeenCalledTimes(1);
+  });
+
+  test("ask_user_question checked implement selection routes to exec", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "approved",
+      },
+      answerSelections: {
+        decision: ["Implementation"],
+      },
+    });
+
+    expect(targetAgentId).toBe("exec");
+  });
+
+  test("ask_user_question checked orchestrate selection routes to orchestrator", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "exec",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "approved",
+      },
+      answerSelections: {
+        decision: ["Orchestrate"],
+      },
+    });
+
+    expect(targetAgentId).toBe("orchestrator");
+  });
+
+  test("ask_user_question generic approval uses configured orchestrator routing", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "Approved",
+      },
+    });
+
+    expect(targetAgentId).toBe("orchestrator");
+  });
+
+  test("ask_user_question generic approval with auto routing falls back to exec without plan content", async () => {
+    const { internal, childId, createModel } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "auto",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "approved",
+      },
+    });
+
+    expect(targetAgentId).toBe("exec");
+    expect(createModel).not.toHaveBeenCalled();
+  });
+
+  test("ask_user_question non-approval answers do not trigger handoff", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "Please revise",
+      },
+    });
+
+    expect(targetAgentId).toBeNull();
   });
 
   test("stream-end with propose_plan success hands off to orchestrator when routing is orchestrator", async () => {

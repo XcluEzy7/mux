@@ -84,6 +84,18 @@ function isAskUserQuestionPayload(val: unknown): val is AskUserQuestionUiOnlyPay
     }
   }
 
+  if (record.answerSelections != null) {
+    if (typeof record.answerSelections !== "object") {
+      return false;
+    }
+
+    for (const [, labels] of Object.entries(record.answerSelections as Record<string, unknown>)) {
+      if (!Array.isArray(labels) || labels.some((label) => typeof label !== "string")) {
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
@@ -443,17 +455,21 @@ export function AskUserQuestionToolCall(props: {
     setSubmitError(null);
 
     let answers: Record<string, string>;
+    let answerSelections: Record<string, string[]>;
     let workspaceId: string;
 
     try {
       answers = {};
+      answerSelections = {};
       for (const q of props.args.questions) {
         const draft = draftAnswers[q.question];
         if (draft && isQuestionAnswered(q, draft)) {
           answers[q.question] = draftToAnswerString(q, draft);
+          answerSelections[q.question] = draft.selected.filter((label) => label !== OTHER_VALUE);
         } else {
           // Unanswered questions get empty string
           answers[q.question] = "";
+          answerSelections[q.question] = [];
         }
       }
 
@@ -472,6 +488,7 @@ export function AskUserQuestionToolCall(props: {
         workspaceId,
         toolCallId: props.toolCallId,
         answers,
+        answerSelections,
       })
       .then(async (result) => {
         if (!result.success) {
@@ -482,6 +499,7 @@ export function AskUserQuestionToolCall(props: {
         // If the stream was interrupted (e.g. app restart), explicitly resume using
         // the latest persisted send options for this workspace.
         let sendOptions = getSendOptionsFromStorage(workspaceId);
+        const handoffAgentId = result.data.handoffAgentId;
         const lastUserMessage = [...(workspaceState?.messages ?? [])]
           .reverse()
           .find(
@@ -525,7 +543,7 @@ export function AskUserQuestionToolCall(props: {
 
         const resumeResult = await api.workspace.resumeStream({
           workspaceId,
-          options: sendOptions,
+          options: handoffAgentId ? { ...sendOptions, agentId: handoffAgentId } : sendOptions,
         });
         if (!resumeResult.success) {
           const formatted = formatSendMessageError(resumeResult.error);

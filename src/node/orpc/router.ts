@@ -467,10 +467,8 @@ export const router = (authToken?: string) => {
           // In server mode, users copy the snippet from Settings — no filesystem access.
           const isElectron = "electron" in process.versions;
           if (isElectron) {
-            const {
-              ensureTailscaleSshConfig,
-              removeTailscaleSshConfig,
-            } = await import("@/node/runtime/tailscaleSshConfigWriter");
+            const { ensureTailscaleSshConfig, removeTailscaleSshConfig } =
+              await import("@/node/runtime/tailscaleSshConfigWriter");
             if (input.config?.enabled && input.config.sshHost) {
               await ensureTailscaleSshConfig({
                 sshHost: input.config.sshHost,
@@ -3326,14 +3324,15 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
-            input.answers
+            input.answers,
+            input.answerSelections
           );
 
           if (!result.success) {
             return { success: false, error: result.error };
           }
 
-          return { success: true, data: undefined };
+          return { success: true, data: result.data };
         }),
       answerDelegatedToolCall: t
         .input(schemas.workspace.answerDelegatedToolCall.input)

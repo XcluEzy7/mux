@@ -1101,9 +1101,15 @@ export const workspace = {
         workspaceId: z.string(),
         toolCallId: z.string(),
         answers: z.record(z.string(), z.string()),
+        answerSelections: z.record(z.string(), z.array(z.string())).nullish(),
       })
       .strict(),
-    output: ResultSchema(z.void(), z.string()),
+    output: ResultSchema(
+      z.object({
+        handoffAgentId: z.enum(["exec", "orchestrator"]).nullable(),
+      }),
+      z.string()
+    ),
   },
   answerDelegatedToolCall: {
     input: z
