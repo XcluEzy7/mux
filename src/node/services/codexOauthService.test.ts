@@ -457,7 +457,8 @@ describe("CodexOauthService", () => {
       let requestedUrl = "";
       let sentAccountId: string | null = null;
       mockFetch((input, init) => {
-        requestedUrl = typeof input === "string" ? input : input.toString();
+        requestedUrl =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         sentAccountId = new Headers(init?.headers).get("ChatGPT-Account-Id");
 
         return Promise.resolve(
@@ -510,7 +511,8 @@ describe("CodexOauthService", () => {
       service.updateAccountStatusFromHeaders({ "x-codex-primary-used-percent": "99" });
       const calls: string[] = [];
       mockFetch((input) => {
-        const url = typeof input === "string" ? input : input.toString();
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         calls.push(url);
 
         if (url.includes("/oauth/token")) {
