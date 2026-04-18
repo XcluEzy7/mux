@@ -336,11 +336,12 @@ export async function refreshOllamaProviderCatalog(
     providerConfig,
     opResolver: params.opResolver,
   });
-  const persistedEntries = mergeCatalogEntries({
+  const mergedEntries = mergeCatalogEntries({
     provider: params.provider,
     existingEntries,
     remoteEntries,
   });
+  const persistedEntries = normalizeProviderModelEntries(mergedEntries);
 
   const persistResult = params.providerService.setModels(params.provider, persistedEntries);
   if (!persistResult.success) {

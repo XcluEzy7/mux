@@ -224,6 +224,13 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     return [
       { key: "apiKey", label: "API Key", placeholder: "Enter Ollama API key", type: "secret" },
       {
+        key: "apiKeyFile",
+        label: "API Key File",
+        placeholder: "~/.config/coder/session_token",
+        type: "text",
+        optional: true,
+      },
+      {
         key: "baseUrl",
         label: "Base URL",
         placeholder: "https://ollama.com/api",

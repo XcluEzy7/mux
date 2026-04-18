@@ -1365,6 +1365,10 @@ describe("WorkspaceStore", () => {
         workspaceId: string
       ) => Promise<void>;
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(client as any);
+      getConfig.mockClear();
+      refreshModels.mockClear();
       const first = refresh.call(store, client, "workspace-1");
       const second = refresh.call(store, client, "workspace-1");
       await Promise.resolve();
@@ -1375,6 +1379,85 @@ describe("WorkspaceStore", () => {
       await Promise.all([first, second]);
 
       expect(refreshModels).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows a new client refresh while an old client refresh is still in flight", async () => {
+      let releaseFirstConfig = (): void => undefined;
+      const firstConfigGate = new Promise<void>((resolve) => {
+        releaseFirstConfig = resolve;
+      });
+
+      const getConfigFirst = mock(async () => {
+        await firstConfigGate;
+        return {
+          ollama: { isConfigured: true, isEnabled: true },
+        };
+      });
+      const refreshModelsFirst = mock(() => Promise.resolve({ success: true, data: [] }));
+      const clientA = {
+        ...mockClient,
+        providers: {
+          getConfig: getConfigFirst,
+          // eslint-disable-next-line require-yield
+          onConfigChanged: mock(async function* () {
+            await new Promise(() => {
+              // Keep stream open for test lifetime.
+            });
+          }),
+        },
+        ollama: {
+          refreshModels: refreshModelsFirst,
+        },
+        ollamaCloud: {
+          refreshModels: mock(() => Promise.resolve({ success: true, data: [] })),
+        },
+      };
+
+      const getConfigSecond = mock(() =>
+        Promise.resolve({
+          ollama: { isConfigured: true, isEnabled: true },
+        })
+      );
+      const refreshModelsSecond = mock(() => Promise.resolve({ success: true, data: [] }));
+      const clientB = {
+        ...mockClient,
+        providers: {
+          getConfig: getConfigSecond,
+          // eslint-disable-next-line require-yield
+          onConfigChanged: mock(async function* () {
+            await new Promise(() => {
+              // Keep stream open for test lifetime.
+            });
+          }),
+        },
+        ollama: {
+          refreshModels: refreshModelsSecond,
+        },
+        ollamaCloud: {
+          refreshModels: mock(() => Promise.resolve({ success: true, data: [] })),
+        },
+      };
+
+      const refresh = Reflect.get(store, "refreshOllamaCatalogsForWorkspace") as (
+        client: OllamaRefreshClient,
+        workspaceId: string
+      ) => Promise<void>;
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(clientA as any);
+      const firstRefresh = refresh.call(store, clientA as OllamaRefreshClient, "workspace-race");
+      await Promise.resolve();
+
+      // Simulate reconnect while the first refresh is still waiting on provider config.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(clientB as any);
+      await refresh.call(store, clientB as OllamaRefreshClient, "workspace-race");
+
+      releaseFirstConfig();
+      await firstRefresh;
+
+      expect(refreshModelsSecond).toHaveBeenCalledTimes(1);
+      expect(refreshModelsFirst).not.toHaveBeenCalled();
     });
 
     it("retries a workspace refresh after a best-effort failure", async () => {
@@ -1395,6 +1478,9 @@ describe("WorkspaceStore", () => {
         client: OllamaRefreshClient,
         workspaceId: string
       ) => Promise<void>;
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(client as any);
 
       await refresh.call(store, client, "workspace-2");
       await refresh.call(store, client, "workspace-2");
@@ -1460,6 +1546,9 @@ describe("WorkspaceStore", () => {
         client: OllamaRefreshClient,
         workspaceId: string
       ) => Promise<void>;
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(client as any);
 
       await refresh.call(store, client, "workspace-3");
 

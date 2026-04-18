@@ -530,7 +530,7 @@ export class WorkspaceStore {
   // change outside the app. We only auto-refresh once per opened workspace; manual
   // refresh in Settings remains the fallback when credentials/catalogs change mid-session.
   private refreshedOllamaWorkspaceIds = new Set<string>();
-  private refreshingOllamaWorkspaceIds = new Set<string>();
+  private refreshingOllamaWorkspaceClients = new Map<string, RouterClient<AppRouter>>();
   // Workspaces that need a clean history replay once a new iterator is established.
   // We keep the existing UI visible until the replay can actually start.
   private pendingReplayReset = new Set<string>();
@@ -1125,17 +1125,26 @@ export class WorkspaceStore {
     client: RouterClient<AppRouter>,
     workspaceId: string
   ): Promise<void> {
-    if (
-      this.refreshedOllamaWorkspaceIds.has(workspaceId) ||
-      this.refreshingOllamaWorkspaceIds.has(workspaceId)
-    ) {
+    if (this.refreshedOllamaWorkspaceIds.has(workspaceId)) {
       return;
     }
 
-    this.refreshingOllamaWorkspaceIds.add(workspaceId);
+    const refreshingClient = this.refreshingOllamaWorkspaceClients.get(workspaceId);
+    if (refreshingClient === client) {
+      return;
+    }
+
+    this.refreshingOllamaWorkspaceClients.set(workspaceId, client);
 
     try {
       const providersConfig = await client.providers.getConfig();
+      if (
+        this.client !== client ||
+        this.clientChangeController.signal.aborted ||
+        this.refreshingOllamaWorkspaceClients.get(workspaceId) !== client
+      ) {
+        return;
+      }
 
       const refreshes: Array<Promise<unknown>> = [];
       if (
@@ -1157,6 +1166,14 @@ export class WorkspaceStore {
       }
 
       const results = await Promise.allSettled(refreshes);
+      if (
+        this.client !== client ||
+        this.clientChangeController.signal.aborted ||
+        this.refreshingOllamaWorkspaceClients.get(workspaceId) !== client
+      ) {
+        return;
+      }
+
       const refreshSucceeded = results.every(
         (result) =>
           result.status === "fulfilled" &&
@@ -1171,7 +1188,9 @@ export class WorkspaceStore {
     } catch {
       // Best-effort only. Manual refresh in Settings remains the fallback.
     } finally {
-      this.refreshingOllamaWorkspaceIds.delete(workspaceId);
+      if (this.refreshingOllamaWorkspaceClients.get(workspaceId) === client) {
+        this.refreshingOllamaWorkspaceClients.delete(workspaceId);
+      }
     }
   }
 
