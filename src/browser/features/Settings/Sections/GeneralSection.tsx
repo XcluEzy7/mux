@@ -167,6 +167,8 @@ const WORKTREE_ARCHIVE_BEHAVIOR_OPTIONS: Array<{
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
+import { normalizeTailscaleUsername } from "../utils/tailscale";
+
 export function GeneralSection() {
   const { themePreference, setTheme } = useTheme();
   const { api } = useAPI();

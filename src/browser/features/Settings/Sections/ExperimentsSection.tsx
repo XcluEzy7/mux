@@ -606,6 +606,8 @@ function ConfigurableBindUrlControls() {
  * Shows Tailscale SSH status and detected info when the experiment is enabled.
  * Follows the ConfigurableBindUrlControls pattern.
  */
+import { normalizeTailscaleUsername } from "../utils/tailscale";
+
 export function TailscaleSshControls() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
   const { api } = useAPI();
@@ -658,6 +660,29 @@ export function TailscaleSshControls() {
     }
 
     void loadInfo();
+
+    const configRequestId = requestIdRef.current;
+    void api.server
+      .getTailscaleSsh()
+      .then((config) => {
+        if (requestIdRef.current !== configRequestId) {
+          return;
+        }
+        setTailscaleSshConfig(
+          config
+            ? {
+                ...config,
+                username: normalizeTailscaleUsername(config.username),
+              }
+            : null
+        );
+      })
+      .catch(() => {
+        if (requestIdRef.current !== configRequestId) {
+          return;
+        }
+        setTailscaleSshConfig(null);
+      });
   }, [api, enabled, loadInfo]);
 
   if (!enabled) {
