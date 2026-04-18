@@ -62,6 +62,19 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("validates tailscaleSsh username", () => {
+    const valid = {
+      tailscaleSsh: {
+        enabled: true,
+        sshHost: "my-machine.tailnet.ts.net",
+        username: "alice",
+        proxyCommand: true,
+      },
+    };
+
+    expect(AppConfigOnDiskSchema.safeParse(valid).success).toBe(true);
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 

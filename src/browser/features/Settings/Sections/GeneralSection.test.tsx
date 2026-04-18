@@ -12,6 +12,9 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import type { TailscaleSshConfig, TailscaleInfo } from "@/common/orpc/schemas/api";
 
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
@@ -31,6 +34,9 @@ interface MockAPIClient {
   server: {
     getSshHost: () => Promise<string | null>;
     setSshHost: (input: { sshHost: string | null }) => Promise<void>;
+    getTailscaleSsh: () => Promise<TailscaleSshConfig | null>;
+    setTailscaleSsh: (input: { config: TailscaleSshConfig | null }) => Promise<void>;
+    detectTailscale: (_input: { force?: boolean }) => Promise<TailscaleInfo>;
   };
   projects: {
     getDefaultProjectDir: () => Promise<string>;
@@ -167,6 +173,7 @@ import { GeneralSection } from "./GeneralSection";
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  tailscaleSshConfig?: TailscaleSshConfig | null;
 }
 
 interface MockAPISetup {
@@ -180,15 +187,22 @@ interface MockAPISetup {
       }) => Promise<void>
     >
   >;
+  setTailscaleSshMock: ReturnType<
+    typeof mock<(input: { config: TailscaleSshConfig | null }) => Promise<void>>
+  >;
 }
 
-function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
+function createMockAPI(
+  configOverrides: Partial<MockConfig> = {},
+  tailscaleOverrides: TailscaleSshConfig | null = null
+): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     llmDebugLogs: false,
     ...configOverrides,
   };
+  let tailscaleSshConfig = tailscaleOverrides;
 
   const getConfigMock = mock(() => Promise.resolve({ ...config }));
   const updateCoderPrefsMock = mock(
@@ -202,6 +216,11 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
       return Promise.resolve();
     }
   );
+
+  const setTailscaleSshMock = mock((input: { config: TailscaleSshConfig | null }) => {
+    tailscaleSshConfig = input.config;
+    return Promise.resolve();
+  });
 
   return {
     api: {
@@ -217,6 +236,17 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
       server: {
         getSshHost: mock(() => Promise.resolve(null)),
         setSshHost: mock((_input: { sshHost: string | null }) => Promise.resolve()),
+        getTailscaleSsh: mock(() => Promise.resolve(tailscaleSshConfig)),
+        setTailscaleSsh: setTailscaleSshMock,
+        detectTailscale: mock((_input: { force?: boolean }) =>
+          Promise.resolve({
+            available: true,
+            ip: "100.64.0.1",
+            hostname: "my-machine.tailnet.ts.net",
+            sshEnabled: false,
+            tailnet: "example.ts.net",
+          })
+        ),
       },
       projects: {
         getDefaultProjectDir: mock(() => Promise.resolve("")),
@@ -225,6 +255,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     },
     getConfigMock,
     updateCoderPrefsMock,
+    setTailscaleSshMock,
   };
 }
 
@@ -242,15 +273,19 @@ describe("GeneralSection", () => {
       "@/browser/components/SelectPrimitive/SelectPrimitive",
       () => ActualSelectPrimitiveModule
     );
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH), null);
     cleanupDom?.();
     cleanupDom = null;
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock } = createMockAPI({
-      coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
-      worktreeArchiveBehavior: options.worktreeArchiveBehavior,
-    });
+    const { api, updateCoderPrefsMock, setTailscaleSshMock } = createMockAPI(
+      {
+        coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
+        worktreeArchiveBehavior: options.worktreeArchiveBehavior,
+      },
+      options.tailscaleSshConfig ?? null
+    );
     mockApi = api;
 
     const view = render(
@@ -259,7 +294,7 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, view };
+    return { updateCoderPrefsMock, setTailscaleSshMock, view };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -286,6 +321,10 @@ describe("GeneralSection", () => {
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const portalRoot = view.baseElement.ownerDocument.body;
     fireEvent.click(within(portalRoot).getByText(optionText));
+  }
+
+  function enableTailscaleExperiment(): void {
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH), true);
   }
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
@@ -470,5 +509,30 @@ describe("GeneralSection", () => {
       expect(updateCoderPrefsMock).not.toHaveBeenCalled();
       expect(trigger.hasAttribute("disabled")).toBe(false);
     });
+  });
+
+  test("shows advanced Tailscale SSH username controls in General settings", async () => {
+    enableTailscaleExperiment();
+    const { view } = renderGeneralSection({
+      tailscaleSshConfig: {
+        enabled: true,
+        sshHost: "my-machine.tailnet.ts.net",
+        username: undefined,
+        proxyCommand: true,
+      },
+    });
+
+    const advancedSummary = await view.findByText("Advanced connection settings");
+    const advancedDetails = advancedSummary.closest("details");
+    if (advancedDetails) {
+      advancedDetails.setAttribute("open", "");
+    }
+
+    await view.findByText("SSH username");
+    expect(
+      view.getByText(
+        /Used in the SSH config on your local device\. Leave blank to use your OS username\./i
+      )
+    ).toBeTruthy();
   });
 });

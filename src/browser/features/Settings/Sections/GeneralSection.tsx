@@ -167,6 +167,14 @@ const WORKTREE_ARCHIVE_BEHAVIOR_OPTIONS: Array<{
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
+function normalizeTailscaleUsername(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed == null || trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 export function GeneralSection() {
   const { themePreference, setTheme } = useTheme();
   const { api } = useAPI();
@@ -426,7 +434,14 @@ export function GeneralSection() {
     void api.server
       .getTailscaleSsh()
       .then((config) => {
-        setTailscaleSshConfig(config);
+        setTailscaleSshConfig(
+          config
+            ? {
+                ...config,
+                username: normalizeTailscaleUsername(config.username),
+              }
+            : null
+        );
       })
       .finally(() => {
         setTailscaleSshLoaded(true);
@@ -438,7 +453,7 @@ export function GeneralSection() {
       // Build a minimal config when enabling for the first time.
       // Default proxyCommand=true (ProxyCommand mode) to match the schema default.
       const next: TailscaleSshConfig = {
-        ...(tailscaleSshConfig ?? { sshHost: undefined, proxyCommand: true }),
+        ...(tailscaleSshConfig ?? { sshHost: undefined, username: undefined, proxyCommand: true }),
         enabled,
       };
       persistTailscaleSsh(next);
@@ -456,6 +471,20 @@ export function GeneralSection() {
       const next: TailscaleSshConfig = {
         ...tailscaleSshConfig,
         sshHost: normalizedHost || undefined,
+      };
+      persistTailscaleSsh(next);
+    },
+    [tailscaleSshConfig, persistTailscaleSsh]
+  );
+
+  const handleTailscaleSshUsernameChange = useCallback(
+    (value: string) => {
+      if (!tailscaleSshConfig) {
+        return;
+      }
+      const next: TailscaleSshConfig = {
+        ...tailscaleSshConfig,
+        username: normalizeTailscaleUsername(value),
       };
       persistTailscaleSsh(next);
     },
@@ -835,6 +864,29 @@ export function GeneralSection() {
                 />
               </div>
 
+              <details className="rounded-md border border-transparent">
+                <summary className="text-foreground cursor-pointer text-sm">
+                  Advanced connection settings
+                </summary>
+                <div className="mt-3 flex items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="text-foreground text-sm">SSH username</div>
+                    <div className="text-muted text-xs">
+                      Used in the SSH config on your local device. Leave blank to use your OS
+                      username.
+                    </div>
+                  </div>
+                  <Input
+                    value={tailscaleSshConfig.username ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      handleTailscaleSshUsernameChange(e.target.value)
+                    }
+                    placeholder="your-username"
+                    className="border-border-medium bg-background-secondary h-9 w-48"
+                  />
+                </div>
+              </details>
+
               <div>
                 <div className="text-foreground mb-2 text-sm">Connection Mode</div>
                 <div className="space-y-1">
@@ -900,10 +952,16 @@ export function GeneralSection() {
                     </div>
                     <div className="bg-background-secondary relative rounded p-2">
                       <pre className="text-foreground overflow-x-auto text-xs">
-                        {generateTailscaleSshSnippet(tailscaleInfo)}
+                        {generateTailscaleSshSnippet(tailscaleInfo, {
+                          username: tailscaleSshConfig.username,
+                        })}
                       </pre>
                       <div className="absolute top-1.5 right-1.5">
-                        <CopyButton text={generateTailscaleSshSnippet(tailscaleInfo)} />
+                        <CopyButton
+                          text={generateTailscaleSshSnippet(tailscaleInfo, {
+                            username: tailscaleSshConfig.username,
+                          })}
+                        />
                       </div>
                     </div>
                   </div>

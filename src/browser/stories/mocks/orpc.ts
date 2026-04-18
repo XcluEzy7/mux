@@ -634,6 +634,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
+      getTailscaleSsh: () => Promise.resolve(null),
+      setTailscaleSsh: () => Promise.resolve(undefined),
+      detectTailscale: () =>
+        Promise.resolve({
+          available: false,
+          ip: null,
+          hostname: null,
+          sshEnabled: false,
+          tailnet: null,
+        }),
     },
     serverAuth: {
       listSessions: () =>

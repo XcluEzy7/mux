@@ -32,6 +32,10 @@ import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
 import { detectTailscale } from "@/node/services/tailscaleDetector";
+import {
+  ensureTailscaleSshConfig,
+  removeTailscaleSshConfig,
+} from "@/node/runtime/tailscaleSshConfigWriter";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
@@ -458,22 +462,31 @@ export const router = (authToken?: string) => {
         .input(schemas.server.setTailscaleSsh.input)
         .output(schemas.server.setTailscaleSsh.output)
         .handler(async ({ context, input }) => {
+          let normalizedConfig: NonNullable<typeof input.config> | undefined;
+          if (input.config != null) {
+            const normalizedUsername = input.config.username?.trim();
+            normalizedConfig = {
+              ...input.config,
+              username:
+                normalizedUsername == null || normalizedUsername.length === 0
+                  ? undefined
+                  : normalizedUsername,
+            };
+          }
+
           await context.config.editConfig((config) => ({
             ...config,
-            tailscaleSsh: input.config ?? undefined,
+            tailscaleSsh: normalizedConfig,
           }));
 
           // In Electron mode, keep ~/.ssh/config in sync with Mux config.
           // In server mode, users copy the snippet from Settings — no filesystem access.
           const isElectron = "electron" in process.versions;
           if (isElectron) {
-            const {
-              ensureTailscaleSshConfig,
-              removeTailscaleSshConfig,
-            } = await import("@/node/runtime/tailscaleSshConfigWriter");
-            if (input.config?.enabled && input.config.sshHost) {
+            if (normalizedConfig?.enabled && normalizedConfig.sshHost) {
               await ensureTailscaleSshConfig({
-                sshHost: input.config.sshHost,
+                sshHost: normalizedConfig.sshHost,
+                username: normalizedConfig.username,
               });
             } else {
               await removeTailscaleSshConfig();

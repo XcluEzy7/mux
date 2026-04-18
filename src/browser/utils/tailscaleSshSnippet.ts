@@ -27,7 +27,9 @@ export function generateTailscaleSshSnippet(
   const hosts = [info.hostname, info.ip].filter(Boolean).join(" ");
   // Use %u token instead of $USER — OpenSSH expands %u in User directives but
   // does not expand bare shell variables like $USER.
-  const user = options.username ?? "%u";
+  const normalizedUsername = options.username?.trim();
+  const user =
+    normalizedUsername == null || normalizedUsername.length === 0 ? "%u" : normalizedUsername;
 
   return `Host ${hosts}
   ProxyCommand tailscale nc %h %p

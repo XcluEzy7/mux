@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
-import type { TailscaleInfo } from "@/common/orpc/schemas/api";
+import type { TailscaleInfo, TailscaleSshConfig } from "@/common/orpc/schemas/api";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
@@ -606,9 +606,18 @@ function ConfigurableBindUrlControls() {
  * Shows Tailscale SSH status and detected info when the experiment is enabled.
  * Follows the ConfigurableBindUrlControls pattern.
  */
+function normalizeTailscaleUsername(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed == null || trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 export function TailscaleSshControls() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
   const { api } = useAPI();
+  const [tailscaleSshConfig, setTailscaleSshConfig] = useState<TailscaleSshConfig | null>(null);
   const [tailscaleInfo, setTailscaleInfo] = useState<TailscaleInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -652,17 +661,40 @@ export function TailscaleSshControls() {
     if (!enabled || !api) {
       requestIdRef.current += 1;
       setTailscaleInfo(null);
+      setTailscaleSshConfig(null);
       setLoading(false);
       setError(null);
       return;
     }
 
     void loadInfo();
+    void api.server
+      .getTailscaleSsh()
+      .then((config) => {
+        setTailscaleSshConfig(
+          config
+            ? {
+                ...config,
+                username: normalizeTailscaleUsername(config.username),
+              }
+            : null
+        );
+      })
+      .catch(() => {
+        setTailscaleSshConfig(null);
+      });
   }, [api, enabled, loadInfo]);
 
   if (!enabled) {
     return null;
   }
+
+  const proxyCommandSnippet =
+    tailscaleInfo != null
+      ? generateTailscaleSshSnippet(tailscaleInfo, {
+          username: tailscaleSshConfig?.username,
+        })
+      : "";
 
   return (
     <div className="bg-background-secondary mb-3 space-y-2 rounded-md p-3 text-xs">
@@ -727,11 +759,9 @@ export function TailscaleSshControls() {
                 <code className="bg-background rounded px-0.5">~/.ssh/config</code>:
               </div>
               <div className="bg-background relative rounded p-2">
-                <pre className="text-foreground overflow-x-auto">
-                  {generateTailscaleSshSnippet(tailscaleInfo)}
-                </pre>
+                <pre className="text-foreground overflow-x-auto">{proxyCommandSnippet}</pre>
                 <div className="absolute top-1 right-1">
-                  <CopyButton text={generateTailscaleSshSnippet(tailscaleInfo)} />
+                  <CopyButton text={proxyCommandSnippet} />
                 </div>
               </div>
             </div>

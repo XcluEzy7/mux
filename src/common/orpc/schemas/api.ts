@@ -130,6 +130,7 @@ const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "fa
 export const TailscaleSshConfigSchema = z.object({
   enabled: z.boolean(),
   sshHost: z.string().optional(),
+  username: z.string().optional(),
   proxyCommand: z.boolean(),
 });
 

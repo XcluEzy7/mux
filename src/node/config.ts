@@ -716,6 +716,15 @@ export class Config {
           coderWorkspaceArchiveBehavior
         );
         const updateChannel = parseUpdateChannel(parsed.updateChannel);
+        const tailscaleSsh =
+          parsed.tailscaleSsh != null
+            ? {
+                enabled: parsed.tailscaleSsh.enabled === true,
+                sshHost: parseOptionalNonEmptyString(parsed.tailscaleSsh.sshHost),
+                username: parseOptionalNonEmptyString(parsed.tailscaleSsh.username),
+                proxyCommand: parsed.tailscaleSsh.proxyCommand !== false,
+              }
+            : undefined;
 
         const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
         const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
@@ -774,6 +783,7 @@ export class Config {
           defaultRuntime,
           runtimeEnablement,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+          tailscaleSsh,
         };
       }
     } catch (error) {
@@ -1003,6 +1013,14 @@ export class Config {
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
+      }
+      if (config.tailscaleSsh) {
+        data.tailscaleSsh = {
+          enabled: config.tailscaleSsh.enabled === true,
+          sshHost: parseOptionalNonEmptyString(config.tailscaleSsh.sshHost),
+          username: parseOptionalNonEmptyString(config.tailscaleSsh.username),
+          proxyCommand: config.tailscaleSsh.proxyCommand !== false,
+        };
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

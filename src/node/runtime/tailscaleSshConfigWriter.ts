@@ -106,7 +106,11 @@ export async function ensureTailscaleSshConfig(opts: TailscaleSshConfigOptions):
   const endIdx = existingContent.indexOf(MUX_TAILSCALE_SSH_BLOCK_END);
 
   const hosts = [opts.sshHost, opts.sshIp].filter(Boolean).join(" ");
-  const user = opts.username ?? os.userInfo().username;
+  const normalizedUsername = opts.username?.trim();
+  const user =
+    normalizedUsername == null || normalizedUsername.length === 0
+      ? os.userInfo().username
+      : normalizedUsername;
   const newBlock = renderTailscaleBlock(hosts, user);
 
   let nextContent: string;
