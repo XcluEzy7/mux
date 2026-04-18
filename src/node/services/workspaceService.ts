@@ -5871,13 +5871,24 @@ export class WorkspaceService extends EventEmitter {
     answerSelections?: Record<string, string[]> | null
   ): Promise<Result<{ handoffAgentId: "exec" | "orchestrator" | null }>> {
     const resolveHandoffAgentId = async (): Promise<"exec" | "orchestrator" | null> => {
-      return (
-        (await this.taskService?.resolveAskUserQuestionHandoffTarget({
+      try {
+        return (
+          (await this.taskService?.resolveAskUserQuestionHandoffTarget({
+            workspaceId,
+            answers,
+            answerSelections,
+          })) ?? null
+        );
+      } catch (handoffError) {
+        // The answer has already been accepted/committed by this point, so handoff
+        // target resolution must be best-effort and never fail the overall request.
+        log.error("Failed to resolve ask_user_question handoff target", {
           workspaceId,
-          answers,
-          answerSelections,
-        })) ?? null
-      );
+          toolCallId,
+          error: handoffError,
+        });
+        return null;
+      }
     };
 
     try {

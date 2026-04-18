@@ -33,6 +33,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
+import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
@@ -40,6 +41,7 @@ import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator"
 import * as runtimeExecHelpers from "@/node/utils/runtime/helpers";
 import * as removeManagedGitWorktreeModule from "@/node/worktree/removeManagedGitWorktree";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
+import { log } from "@/node/services/log";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 // Helper to access private renamingWorkspaces set
@@ -6656,6 +6658,70 @@ describe("WorkspaceService interruptStream", () => {
       expect(restoreQueueToInput).not.toHaveBeenCalled();
     } finally {
       getOrCreateSessionSpy.mockRestore();
+    }
+  });
+});
+
+describe("WorkspaceService answerAskUserQuestion", () => {
+  test("returns success with null handoff when handoff resolution throws after accepting answer", async () => {
+    const workspaceId = "ws-ask-user-question-handoff-failure";
+    const toolCallId = "tool-ask-user-question-handoff-failure";
+    const question = "How should we proceed?";
+    const answers = { [question]: "Proceed with implementation" };
+
+    const pendingAnswers = askUserQuestionManager.registerPending(workspaceId, toolCallId, [
+      {
+        question,
+        header: "Direction",
+        options: [
+          { label: "Proceed with implementation", description: "Continue the requested changes" },
+          { label: "Pause", description: "Wait for more direction" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+
+    const workspaceService = new WorkspaceService(
+      {
+        findWorkspace: mock(() => null),
+      } as unknown as Config,
+      {} as HistoryService,
+      {
+        isStreaming: mock(() => false),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        on: mock(() => {}),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        off: mock(() => {}),
+      } as unknown as AIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    workspaceService.setTaskService({
+      resolveAskUserQuestionHandoffTarget: mock(() => {
+        throw new Error("handoff resolution failed");
+      }),
+    } as unknown as TaskService);
+
+    const logErrorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+    try {
+      const result = await workspaceService.answerAskUserQuestion(workspaceId, toolCallId, answers);
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+
+      expect(result.data.handoffAgentId).toBeNull();
+      await expect(pendingAnswers).resolves.toEqual(answers);
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        "Failed to resolve ask_user_question handoff target",
+        expect.objectContaining({ workspaceId, toolCallId })
+      );
+    } finally {
+      logErrorSpy.mockRestore();
     }
   });
 });
