@@ -6715,7 +6715,7 @@ describe("WorkspaceService answerAskUserQuestion", () => {
       }
 
       expect(result.data.handoffAgentId).toBeNull();
-      await expect(pendingAnswers).resolves.toEqual(answers);
+      expect(await pendingAnswers).toEqual(answers);
       expect(logErrorSpy).toHaveBeenCalledWith(
         "Failed to resolve ask_user_question handoff target",
         expect.objectContaining({ workspaceId, toolCallId })
