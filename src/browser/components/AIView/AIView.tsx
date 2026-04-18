@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -22,6 +22,12 @@ interface AIViewProps {
   incompatibleRuntime?: string;
   /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
   isInitializing?: boolean;
+  /**
+   * One-shot nonce used to force an extra agent refresh only for the
+   * creation -> workspace handoff path.
+   */
+  creationHandoffAgentRefreshNonce?: number | null;
+  onCreationHandoffAgentRefreshConsumed?: (workspaceId: string, nonce: number) => void;
 }
 
 /**
@@ -48,14 +54,37 @@ const IncompatibleWorkspaceView: React.FC<{ message: string; className?: string 
   </div>
 );
 
-function WorkspaceScopedAgentRefresh(props: { workspaceId: string }): null {
+function WorkspaceScopedAgentRefresh(props: {
+  workspaceId: string;
+  creationHandoffAgentRefreshNonce?: number | null;
+  onCreationHandoffAgentRefreshConsumed?: (workspaceId: string, nonce: number) => void;
+}): null {
+  const { workspaceId, creationHandoffAgentRefreshNonce, onCreationHandoffAgentRefreshConsumed } =
+    props;
   const { refresh } = useAgent();
+  const consumedNonceRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Keep creation -> workspace handoff deterministic by refreshing once after the
-    // workspace-scoped provider mounts for this workspace id.
-    void refresh();
-  }, [refresh, props.workspaceId]);
+    if (creationHandoffAgentRefreshNonce == null) {
+      return;
+    }
+
+    const nonceKey = `${workspaceId}:${creationHandoffAgentRefreshNonce}`;
+    if (consumedNonceRef.current === nonceKey) {
+      return;
+    }
+    consumedNonceRef.current = nonceKey;
+
+    // Restrict the extra refresh to the creation -> workspace handoff path.
+    void refresh().finally(() => {
+      onCreationHandoffAgentRefreshConsumed?.(workspaceId, creationHandoffAgentRefreshNonce);
+    });
+  }, [
+    creationHandoffAgentRefreshNonce,
+    onCreationHandoffAgentRefreshConsumed,
+    refresh,
+    workspaceId,
+  ]);
 
   return null;
 }
@@ -71,7 +100,11 @@ export const AIView: React.FC<AIViewProps> = (props) => {
 
   return (
     <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
-      <WorkspaceScopedAgentRefresh workspaceId={props.workspaceId} />
+      <WorkspaceScopedAgentRefresh
+        workspaceId={props.workspaceId}
+        creationHandoffAgentRefreshNonce={props.creationHandoffAgentRefreshNonce}
+        onCreationHandoffAgentRefreshConsumed={props.onCreationHandoffAgentRefreshConsumed}
+      />
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ThinkingProvider workspaceId={props.workspaceId}>
         <BackgroundBashProvider workspaceId={props.workspaceId}>
