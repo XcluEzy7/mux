@@ -1,0 +1,69 @@
+# Minimal PR workflow for fork repositories
+# Removes upstream-only jobs (codex, signing builds, Docker push)
+# Rename this to pr.yml or keep alongside as pr-lite.yml
+
+name: PR Lite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    name: Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+      - run: make static-check
+
+  test-unit:
+    name: Test / Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+      - run: make build-main
+      - run: bun test --coverage src
+
+  test-integration:
+    name: Test / Integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+      - run: make build-main
+      - run: TEST_INTEGRATION=1 bun x jest --maxWorkers=100% --silent tests/
+
+  required:
+    name: Required
+    needs: [static-check, test-unit, test-integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          for result in $results; do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "❌ CI failed"
+              exit 1
+            fi
+          done
+          echo "✅ All checks passed"
