@@ -462,19 +462,31 @@ export const router = (authToken?: string) => {
         .input(schemas.server.setTailscaleSsh.input)
         .output(schemas.server.setTailscaleSsh.output)
         .handler(async ({ context, input }) => {
+          // Normalize whitespace-only username to undefined (UI does this, but backend must too
+          // for direct API calls and IPC tests that bypass UI normalization).
+          const normalizedConfig = input.config
+            ? {
+                ...input.config,
+                username:
+                  input.config.username?.trim().length > 0
+                    ? input.config.username.trim()
+                    : undefined,
+              }
+            : undefined;
+
           await context.config.editConfig((config) => ({
             ...config,
-            tailscaleSsh: input.config ?? undefined,
+            tailscaleSsh: normalizedConfig ?? undefined,
           }));
 
           // In Electron mode, keep ~/.ssh/config in sync with Mux config.
           // In server mode, users copy the snippet from Settings — no filesystem access.
           const isElectron = "electron" in process.versions;
           if (isElectron) {
-            if (input.config?.enabled && input.config.sshHost) {
+            if (normalizedConfig?.enabled && normalizedConfig.sshHost) {
               await ensureTailscaleSshConfig({
-                sshHost: input.config.sshHost,
-                username: input.config.username,
+                sshHost: normalizedConfig.sshHost,
+                username: normalizedConfig.username,
               });
             } else {
               await removeTailscaleSshConfig();
