@@ -8,9 +8,11 @@ import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getJwtService, type JwtProvider } from "@/node/services/auth/jwt";
+import type { ValidateSessionTokenOptions, ServerAuthSessionView } from "@/node/services/auth/types";
 
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
-const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
+const GITHUB_ACCESS_TOKEN_URL="https://github.com/login/oauth/access_token";
 const GITHUB_USER_API_URL = "https://api.github.com/user";
 
 // Mux-owned OAuth app client ID used for server-mode owner login.
@@ -27,9 +29,9 @@ const SESSION_LAST_USED_PERSIST_INTERVAL_MS = 60 * 1000;
 // allocating unbounded pending flows and outbound GitHub requests.
 const MAX_CONCURRENT_GITHUB_DEVICE_FLOWS = 32;
 
-export const SERVER_AUTH_SESSION_COOKIE_NAME = "mux_session";
-export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
-const SERVER_AUTH_SESSION_MAX_AGE_MS = SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000;
+export const SERVER_AUTH_SESSION_COOKIE_NAME="mux_session";
+export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS=30 * 24 * 60 * 60;
+const SERVER_AUTH_SESSION_MAX_AGE_MS=SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000;
 
 interface PersistedServerAuthSession {
   id: string;
@@ -80,19 +82,6 @@ interface GithubAccessTokenResponse {
 
 interface GithubUserResponse {
   login?: string;
-}
-
-export interface ServerAuthSessionView {
-  id: string;
-  label: string;
-  createdAtMs: number;
-  lastUsedAtMs: number;
-  isCurrent: boolean;
-}
-
-export interface ValidateSessionTokenOptions {
-  userAgent?: string;
-  ipAddress?: string;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -279,9 +268,11 @@ export class ServerAuthService {
   private readonly sessionsMutex = new AsyncMutex();
   private readonly githubDeviceFlows = new Map<string, GithubDeviceFlow>();
   private githubDeviceFlowStartsInFlight = 0;
+  private readonly jwtService: JwtProvider;
 
-  constructor(private readonly config: Config) {
+  constructor(private readonly config: Config, jwtService?: JwtProvider) {
     this.sessionsFilePath = path.join(this.config.rootDir, "serverAuthSessions.json");
+    this.jwtService = jwtService ?? getJwtService();
   }
 
   getAllowedGithubOwner(): string | undefined {
@@ -293,8 +284,6 @@ export class ServerAuthService {
   }
 
   private getTrackedGithubDeviceFlowCount(): number {
-    // Count all tracked flows (including canceled/completed ones waiting for cleanup)
-    // so disconnect/cancel loops cannot bypass unauthenticated start throttling.
     return this.githubDeviceFlows.size;
   }
 
@@ -385,7 +374,6 @@ export class ServerAuthService {
       return Err("Device flow not found");
     }
 
-    // Keep the first non-empty metadata from callers so the created session can be labeled.
     flow.userAgent ??= normalizeOptionalString(opts?.userAgent);
     flow.ipAddress ??= normalizeIpAddress(opts?.ipAddress);
 
@@ -431,7 +419,13 @@ export class ServerAuthService {
       return null;
     }
 
-    const tokenHash = hashSessionToken(normalizedToken);
+    // Verify the JWT signature and expiration
+    const claims = this.jwtService.verifyToken(normalizedToken);
+    if (!claims) {
+      return null;
+    }
+
+    const sessionId = claims.sub;
     const now = Date.now();
     const normalizedUserAgent = normalizeOptionalString(opts?.userAgent);
     const normalizedIpAddress = normalizeIpAddress(opts?.ipAddress);
@@ -439,8 +433,9 @@ export class ServerAuthService {
     await using _lock = await this.sessionsMutex.acquire();
 
     const data = await this.loadPersistedSessionsLocked();
-    const session = data.sessions.find((candidate) => candidate.tokenHash === tokenHash);
+    const session = data.sessions.find((candidate) => candidate.id === sessionId);
     if (!session) {
+      // Session doesn't exist in our store - could be from different instance or revoked
       return null;
     }
 
@@ -455,8 +450,6 @@ export class ServerAuthService {
       try {
         await this.savePersistedSessionsLocked(data);
       } catch (error) {
-        // Validation should still fail closed for expired sessions even if pruning
-        // persistence fails.
         log.warn("Failed to prune expired server auth session", {
           sessionId: session.id,
           error: getErrorMessage(error),
@@ -486,7 +479,6 @@ export class ServerAuthService {
       try {
         await this.savePersistedSessionsLocked(data);
       } catch (error) {
-        // Best-effort metadata update: auth should succeed as long as token validation passes.
         log.warn("Failed to persist server auth session metadata", {
           sessionId: session.id,
           error: getErrorMessage(error),
@@ -518,7 +510,6 @@ export class ServerAuthService {
       try {
         await this.savePersistedSessionsLocked(data);
       } catch (error) {
-        // Listing sessions should remain available even if cleanup persistence fails.
         log.warn("Failed to persist expired server auth session cleanup", {
           removedCount,
           error: getErrorMessage(error),
@@ -654,8 +645,6 @@ export class ServerAuthService {
           });
 
           if (flow.cancelled) {
-            // The flow may be canceled while a session write is in progress.
-            // Defensive cleanup avoids orphan sessions that have no delivered token.
             if (sessionResult.success) {
               const removed = await this.revokeSession(sessionResult.data.sessionId);
               if (!removed) {
@@ -789,15 +778,18 @@ export class ServerAuthService {
     userAgent?: string;
     ipAddress?: string;
   }): Promise<Result<{ sessionId: string; sessionToken: string }, string>> {
-    const sessionToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = hashSessionToken(sessionToken);
+    const sessionId = crypto.randomUUID();
     const now = Date.now();
 
     const userAgent = normalizeOptionalString(opts?.userAgent);
     const ipAddress = normalizeIpAddress(opts?.ipAddress);
 
+    // Create a JWT for this session - token is the JWT string
+    const sessionToken = this.jwtService.createToken(sessionId, SERVER_AUTH_SESSION_MAX_AGE_SECONDS);
+    const tokenHash = hashSessionToken(sessionToken);
+
     const session: PersistedServerAuthSession = {
-      id: crypto.randomUUID(),
+      id: sessionId,
       tokenHash,
       createdAtMs: now,
       lastUsedAtMs: now,

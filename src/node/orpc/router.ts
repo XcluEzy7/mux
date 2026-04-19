@@ -39,10 +39,6 @@ import {
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
-import {
-  ensureTailscaleSshConfig,
-  removeTailscaleSshConfig,
-} from "@/node/runtime/tailscaleSshConfigWriter";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
