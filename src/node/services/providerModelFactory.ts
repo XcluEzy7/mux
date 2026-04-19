@@ -1438,6 +1438,42 @@ export class ProviderModelFactory {
         return Ok(provider(modelId));
       }
 
+      // Handle Ollama Cloud provider
+      if (providerName === "ollama-cloud") {
+        const creds = resolveProviderCredentials("ollama-cloud", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
+        const baseFetch = getProviderFetch(providerConfig);
+        const requestScopedSettings =
+          muxProviderOptions?.ollamaCloud &&
+          typeof muxProviderOptions.ollamaCloud === "object" &&
+          !Array.isArray(muxProviderOptions.ollamaCloud)
+            ? muxProviderOptions.ollamaCloud
+            : undefined;
+
+        // Inject Authorization header for Ollama Cloud (Bearer token auth)
+        const ollamaSettings = getOllamaProviderSettings(providerConfig);
+        const authHeaders: Record<string, string> = {
+          ...(ollamaSettings.headers as Record<string, string> | undefined),
+          Authorization: `Bearer ${resolvedApiKey!}`,
+        };
+
+        const { createOllama } = await PROVIDER_REGISTRY["ollama-cloud"]();
+        const provider = createOllama({
+          ...ollamaSettings,
+          headers: authHeaders,
+          ...(requestScopedSettings ?? {}),
+          fetch: baseFetch,
+        });
+        return Ok(provider(modelId));
+      }
+
       // Handle OpenRouter provider
       if (providerName === "openrouter") {
         // Resolve credentials from config + env (single source of truth)

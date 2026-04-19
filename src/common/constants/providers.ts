@@ -24,6 +24,7 @@ export type ProviderName =
   | "github-copilot"
   | "bedrock"
   | "ollama"
+  | "ollama-cloud"
   | "synthetic-new";
 
 interface ProviderDefinition {
@@ -195,6 +196,13 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOllama",
     requiresApiKey: false, // Local service
     kind: "local",
+  },
+  "ollama-cloud": {
+    displayName: "Ollama Cloud",
+    import: () => import("ollama-ai-provider-v2"),
+    factoryName: "createOllama",
+    requiresApiKey: true,
+    kind: "direct",
   },
   "synthetic-new": {
     displayName: "Synthetic",

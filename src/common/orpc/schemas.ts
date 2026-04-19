@@ -235,6 +235,8 @@ export {
   copilotOauth,
   muxGovernorOauth,
   codexOauth,
+  ollama,
+  ollamaCloud,
   policy,
   providers,
   ProvidersConfigMapSchema,

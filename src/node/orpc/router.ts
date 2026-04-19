@@ -79,6 +79,7 @@ import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { refreshOllamaProviderCatalog } from "@/node/services/ollamaModelCatalog";
 import { log } from "@/node/services/log";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
 import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
@@ -5051,6 +5052,42 @@ export const router = (authToken?: string) => {
             input.sectionTitle ?? input.sectionId ?? undefined
           ),
         })),
+    },
+    ollama: {
+      refreshModels: t
+        .input(schemas.ollama.refreshModels.input)
+        .output(schemas.ollama.refreshModels.output)
+        .handler(async ({ context }) => {
+          try {
+            const result = await refreshOllamaProviderCatalog({
+              provider: "ollama",
+              config: context.config,
+              providerService: context.providerService,
+              opResolver: context.onePasswordService?.resolve.bind(context.onePasswordService),
+            });
+            return Ok(result.modelIds);
+          } catch (error) {
+            return Err(`Ollama model refresh failed: ${getErrorMessage(error)}`);
+          }
+        }),
+    },
+    ollamaCloud: {
+      refreshModels: t
+        .input(schemas.ollamaCloud.refreshModels.input)
+        .output(schemas.ollamaCloud.refreshModels.output)
+        .handler(async ({ context }) => {
+          try {
+            const result = await refreshOllamaProviderCatalog({
+              provider: "ollama-cloud",
+              config: context.config,
+              providerService: context.providerService,
+              opResolver: context.onePasswordService?.resolve.bind(context.onePasswordService),
+            });
+            return Ok(result.modelIds);
+          } catch (error) {
+            return Err(`Ollama Cloud model refresh failed: ${getErrorMessage(error)}`);
+          }
+        }),
     },
     synthetic: {
       refreshModels: t
