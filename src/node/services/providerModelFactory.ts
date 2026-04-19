@@ -1461,7 +1461,7 @@ export class ProviderModelFactory {
         const ollamaSettings = getOllamaProviderSettings(providerConfig);
         const authHeaders: Record<string, string> = {
           ...(ollamaSettings.headers as Record<string, string> | undefined),
-          Authorization: `Bearer ${resolvedApiKey}`,
+          Authorization: `Bearer ${resolvedApiKey!}`,
         };
 
         const { createOllama } = await PROVIDER_REGISTRY["ollama-cloud"]();
