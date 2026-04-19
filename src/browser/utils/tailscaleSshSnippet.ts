@@ -25,9 +25,9 @@ export function generateTailscaleSshSnippet(
   }
 
   const hosts = [info.hostname, info.ip].filter(Boolean).join(" ");
-  // Use %u token instead of $USER — OpenSSH expands %u in User directives but
-  // does not expand bare shell variables like $USER.
-  const user = options.username ?? "%u";
+  // Keep the remote account explicit. Falling back to the client's local SSH
+  // username breaks remote editor reconnects when the server account differs.
+  const user = options.username ?? "<remote-user>";
 
   return `Host ${hosts}
   ProxyCommand tailscale nc %h %p

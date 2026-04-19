@@ -606,6 +606,7 @@ function ConfigurableBindUrlControls() {
  * Shows Tailscale SSH status and detected info when the experiment is enabled.
  * Follows the ConfigurableBindUrlControls pattern.
  */
+
 export function TailscaleSshControls() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.TAILSCALE_SSH);
   const { api } = useAPI();
@@ -648,6 +649,7 @@ export function TailscaleSshControls() {
     [api]
   );
 
+  // Fetch detection info when experiment is enabled
   useEffect(() => {
     if (!enabled || !api) {
       requestIdRef.current += 1;

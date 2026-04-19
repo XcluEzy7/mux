@@ -21,7 +21,7 @@ export interface TailscaleSshConfigOptions {
   sshHost: string;
   /** Optional IP address for additional host aliasing. */
   sshIp?: string;
-  /** Username for SSH connections (defaults to OS username). */
+  /** Optional remote SSH username override. */
   username?: string;
   /** Path to ~/.ssh/config (defaults to ~/.ssh/config). */
   sshConfigPath?: string;
@@ -74,15 +74,25 @@ async function writeConfigAtomically(
   }
 }
 
-function renderTailscaleBlock(hosts: string, user: string): string {
-  return [
+function renderTailscaleBlock(hosts: string, user?: string): string {
+  const lines = [
     MUX_TAILSCALE_SSH_BLOCK_START,
     `Host ${hosts}`,
     "  ProxyCommand tailscale nc %h %p",
-    `  User ${user}`,
     "  StrictHostKeyChecking accept-new",
-    MUX_TAILSCALE_SSH_BLOCK_END,
-  ].join("\n");
+  ];
+
+  // Keep the remote username explicit when we know it so editors like Zed do
+  // not reconnect with the client-side local account by mistake.
+  // Whitespace-only username should fall back to OS username.
+  const trimmedUser = user?.trim();
+  const effectiveUser = trimmedUser && trimmedUser.length > 0 ? trimmedUser : os.userInfo().username;
+  if (effectiveUser) {
+    lines.splice(3, 0, `  User ${effectiveUser}`);
+  }
+
+  lines.push(MUX_TAILSCALE_SSH_BLOCK_END);
+  return lines.join("\n");
 }
 
 /**
@@ -106,8 +116,7 @@ export async function ensureTailscaleSshConfig(opts: TailscaleSshConfigOptions):
   const endIdx = existingContent.indexOf(MUX_TAILSCALE_SSH_BLOCK_END);
 
   const hosts = [opts.sshHost, opts.sshIp].filter(Boolean).join(" ");
-  const user = opts.username ?? os.userInfo().username;
-  const newBlock = renderTailscaleBlock(hosts, user);
+  const newBlock = renderTailscaleBlock(hosts, opts.username);
 
   let nextContent: string;
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {

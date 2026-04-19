@@ -438,12 +438,16 @@ export function GeneralSection() {
       // Build a minimal config when enabling for the first time.
       // Default proxyCommand=true (ProxyCommand mode) to match the schema default.
       const next: TailscaleSshConfig = {
-        ...(tailscaleSshConfig ?? { sshHost: undefined, proxyCommand: true }),
+        ...(tailscaleSshConfig ?? {
+          sshHost: undefined,
+          username: tailscaleInfo?.username ?? undefined,
+          proxyCommand: true,
+        }),
         enabled,
       };
       persistTailscaleSsh(next);
     },
-    [tailscaleSshConfig, persistTailscaleSsh]
+    [tailscaleInfo?.username, tailscaleSshConfig, persistTailscaleSsh]
   );
 
   const handleTailscaleSshHostChange = useCallback(
@@ -456,6 +460,21 @@ export function GeneralSection() {
       const next: TailscaleSshConfig = {
         ...tailscaleSshConfig,
         sshHost: normalizedHost || undefined,
+      };
+      persistTailscaleSsh(next);
+    },
+    [tailscaleSshConfig, persistTailscaleSsh]
+  );
+
+  const handleTailscaleSshUsernameChange = useCallback(
+    (value: string) => {
+      if (!tailscaleSshConfig) {
+        return;
+      }
+      const normalizedUsername = value.trim();
+      const next: TailscaleSshConfig = {
+        ...tailscaleSshConfig,
+        username: normalizedUsername || undefined,
       };
       persistTailscaleSsh(next);
     },
@@ -485,9 +504,16 @@ export function GeneralSection() {
         // Auto-fill sshHost from detected hostname/IP if not already set.
         // Read from ref to avoid stale closure after await.
         const currentConfig = tailscaleSshConfigRef.current;
-        if (currentConfig && !currentConfig.sshHost && (info.hostname ?? info.ip)) {
-          const autoHost = info.hostname ?? info.ip ?? "";
-          const next: TailscaleSshConfig = { ...currentConfig, sshHost: autoHost };
+        const autoHost = info.hostname ?? info.ip ?? "";
+        if (
+          currentConfig &&
+          ((!currentConfig.sshHost && autoHost) || (!currentConfig.username && info.username))
+        ) {
+          const next: TailscaleSshConfig = {
+            ...currentConfig,
+            sshHost: currentConfig.sshHost ?? (autoHost ?? undefined),
+            username: currentConfig.username ?? (info.username ?? undefined),
+          };
           persistTailscaleSsh(next);
         }
       } finally {
@@ -835,6 +861,23 @@ export function GeneralSection() {
                 />
               </div>
 
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-foreground text-sm">Remote User</div>
+                  <div className="text-muted text-xs">
+                    SSH username for the server account that Zed or VS Code should connect as
+                  </div>
+                </div>
+                <Input
+                  value={tailscaleSshConfig.username ?? ""}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    handleTailscaleSshUsernameChange(e.target.value)
+                  }
+                  placeholder={tailscaleInfo?.username ?? "ubuntu"}
+                  className="border-border-medium bg-background-secondary h-9 w-48"
+                />
+              </div>
+
               <div>
                 <div className="text-foreground mb-2 text-sm">Connection Mode</div>
                 <div className="space-y-1">
@@ -900,10 +943,18 @@ export function GeneralSection() {
                     </div>
                     <div className="bg-background-secondary relative rounded p-2">
                       <pre className="text-foreground overflow-x-auto text-xs">
-                        {generateTailscaleSshSnippet(tailscaleInfo)}
+                        {generateTailscaleSshSnippet(tailscaleInfo, {
+                          username:
+                            tailscaleSshConfig.username ?? tailscaleInfo.username ?? undefined,
+                        })}
                       </pre>
                       <div className="absolute top-1.5 right-1.5">
-                        <CopyButton text={generateTailscaleSshSnippet(tailscaleInfo)} />
+                        <CopyButton
+                          text={generateTailscaleSshSnippet(tailscaleInfo, {
+                            username:
+                              tailscaleSshConfig.username ?? tailscaleInfo.username ?? undefined,
+                          })}
+                        />
                       </div>
                     </div>
                   </div>

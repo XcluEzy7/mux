@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { APIClient } from "@/browser/contexts/API";
 import { openInEditor } from "./openInEditor";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 interface GlobalWithOptionalWindow {
   window?: unknown;
@@ -31,9 +32,27 @@ describe("openInEditor", () => {
 
   type OpenCall = [url: string, target?: string];
 
-  function createMockWindow(calls: OpenCall[]) {
+  function createMockWindow(
+    calls: OpenCall[],
+    options: {
+      hostname?: string;
+      editorConfig?: { editor: string };
+      experiments?: Record<string, boolean>;
+    } = {}
+  ) {
     return {
-      localStorage: { getItem: () => null },
+      localStorage: {
+        getItem: (key: string) => {
+          if (key === "editorConfig" && options.editorConfig) {
+            return JSON.stringify(options.editorConfig);
+          }
+          if (key in (options.experiments ?? {})) {
+            return JSON.stringify(options.experiments?.[key]);
+          }
+          return null;
+        },
+      },
+      location: { hostname: options.hostname ?? "localhost" },
       open: (url: string, target?: string) => {
         calls.push([url, target]);
         return null;
@@ -132,5 +151,43 @@ describe("openInEditor", () => {
     expect(target).toBe("_blank");
     expect(url.endsWith(filePath)).toBe(false);
     expect(url.endsWith(`/${parentDir}`)).toBe(true);
+  });
+
+  test("uses the remote Tailscale username for zed browser deep links", async () => {
+    const calls: OpenCall[] = [];
+
+    const api = {
+      server: {
+        getTailscaleSsh: () =>
+          Promise.resolve({
+            enabled: true,
+            sshHost: "devbox.tailnet.ts.net",
+            username: "ubuntu",
+            proxyCommand: true,
+          }),
+      },
+    } as unknown as APIClient;
+
+    const result = await withWindow(
+      createMockWindow(calls, {
+        hostname: "mux.remote.example",
+        editorConfig: { editor: "zed" },
+        experiments: {
+          [getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH)]: true,
+        },
+      }),
+      () =>
+        openInEditor({
+          api,
+          workspaceId,
+          targetPath: filePath,
+          isFile: true,
+        })
+    );
+
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      ["zed://ssh/ubuntu@devbox.tailnet.ts.net/home/user/project/plan.md:1:1", "_blank"],
+    ]);
   });
 });

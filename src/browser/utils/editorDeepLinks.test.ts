@@ -109,6 +109,15 @@ describe("getEditorDeepLink", () => {
       expect(url).toBe("zed://ssh/devbox:2222/home/user/project/file.ts");
     });
 
+    test("preserves an explicit SSH username for zed remote URLs", () => {
+      const url = getEditorDeepLink({
+        editor: "zed",
+        path: "/home/user/project/file.ts",
+        sshHost: "ubuntu@devbox",
+      });
+      expect(url).toBe("zed://ssh/ubuntu@devbox/home/user/project/file.ts");
+    });
+
     test("encodes SSH host with special characters", () => {
       const url = getEditorDeepLink({
         editor: "vscode",

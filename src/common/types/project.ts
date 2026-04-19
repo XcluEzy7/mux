@@ -185,11 +185,13 @@ export interface ProjectsConfig {
    *
    * - `enabled`: Toggle Tailscale SSH integration
    * - `sshHost`: Optional manual Tailscale hostname override
+   * - `username`: Optional remote SSH username override
    * - `proxyCommand`: Whether to use SSH ProxyCommand for connections (default: true)
    */
   tailscaleSsh?: {
     enabled: boolean;
     sshHost?: string;
+    username?: string;
     proxyCommand: boolean;
   };
 }
