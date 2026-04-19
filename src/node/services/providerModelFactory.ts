@@ -1457,12 +1457,19 @@ export class ProviderModelFactory {
             ? muxProviderOptions.ollamaCloud
             : undefined;
 
+        // Inject Authorization header for Ollama Cloud (Bearer token auth)
+        const ollamaSettings = getOllamaProviderSettings(providerConfig);
+        const authHeaders: Record<string, string> = {
+          ...(ollamaSettings.headers as Record<string, string> | undefined),
+          Authorization: `Bearer ${resolvedApiKey}`,
+        };
+
         const { createOllama } = await PROVIDER_REGISTRY["ollama-cloud"]();
-        const providerFetch = baseFetch;
         const provider = createOllama({
-          ...getOllamaProviderSettings(providerConfig),
+          ...ollamaSettings,
+          headers: authHeaders,
           ...(requestScopedSettings ?? {}),
-          fetch: providerFetch,
+          fetch: baseFetch,
         });
         return Ok(provider(modelId));
       }
