@@ -468,7 +468,7 @@ export const router = (authToken?: string) => {
             ? {
                 ...input.config,
                 username:
-                  input.config.username?.trim().length > 0
+                  input.config.username && input.config.username.trim().length > 0
                     ? input.config.username.trim()
                     : undefined,
               }

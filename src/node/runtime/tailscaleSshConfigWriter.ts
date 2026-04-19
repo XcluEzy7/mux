@@ -85,7 +85,8 @@ function renderTailscaleBlock(hosts: string, user?: string): string {
   // Keep the remote username explicit when we know it so editors like Zed do
   // not reconnect with the client-side local account by mistake.
   // Whitespace-only username should fall back to OS username.
-  const effectiveUser = user?.trim().length > 0 ? user.trim() : os.userInfo().username;
+  const trimmedUser = user?.trim();
+  const effectiveUser = trimmedUser && trimmedUser.length > 0 ? trimmedUser : os.userInfo().username;
   if (effectiveUser) {
     lines.splice(3, 0, `  User ${effectiveUser}`);
   }

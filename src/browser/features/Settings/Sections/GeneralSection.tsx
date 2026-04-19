@@ -167,8 +167,6 @@ const WORKTREE_ARCHIVE_BEHAVIOR_OPTIONS: Array<{
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
-import { normalizeTailscaleUsername } from "../utils/tailscale";
-
 export function GeneralSection() {
   const { themePreference, setTheme } = useTheme();
   const { api } = useAPI();
@@ -513,8 +511,8 @@ export function GeneralSection() {
         ) {
           const next: TailscaleSshConfig = {
             ...currentConfig,
-            sshHost: currentConfig.sshHost ?? (autoHost || undefined),
-            username: currentConfig.username ?? (info.username || undefined),
+            sshHost: currentConfig.sshHost ?? (autoHost ?? undefined),
+            username: currentConfig.username ?? (info.username ?? undefined),
           };
           persistTailscaleSsh(next);
         }
