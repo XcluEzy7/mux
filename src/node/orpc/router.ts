@@ -812,14 +812,16 @@ export const router = (authToken?: string) => {
                     id: tool.id.trim(),
                     label: tool.label.trim(),
                     command: tool.command.trim(),
-                    args: tool.args?.map((arg) => arg.trim()).filter((arg) => arg.length > 0),
-                    instructions: tool.instructions?.trim() || undefined,
+                    args: tool.args.map((arg) => arg.trim()).filter((arg) => arg.length > 0),
+                    instructions: tool.instructions?.trim() ? tool.instructions.trim() : undefined,
                     provenance: tool.provenance
                       ? {
                           links: tool.provenance.links
                             ?.map((link) => link.trim())
                             .filter((link) => link.length > 0),
-                          package: tool.provenance.package?.trim() || undefined,
+                          package: tool.provenance.package?.trim()
+                            ? tool.provenance.package.trim()
+                            : undefined,
                         }
                       : undefined,
                   })),

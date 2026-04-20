@@ -226,12 +226,13 @@ function buildCustomToolValidation(
         : null,
   };
 
-  const blockingErrors = [fieldErrors.id, fieldErrors.label, fieldErrors.command].filter(
-    (message): message is string => message !== null
-  );
-  const warnings = [fieldErrors.provenanceLinks].filter(
-    (message): message is string => message !== null
-  );
+  const blockingErrors = [
+    fieldErrors.id,
+    fieldErrors.label,
+    fieldErrors.command,
+    fieldErrors.provenanceLinks,
+  ].filter((message): message is string => message !== null);
+  const warnings: string[] = [];
 
   return {
     fieldErrors,
@@ -772,7 +773,7 @@ export function ToolsSettingsSection() {
                         placeholder="https://github.com/acme/weather-tool"
                       />
                       {fieldErrors.provenanceLinks ? (
-                        <p className="text-warning mt-1 text-xs">{fieldErrors.provenanceLinks}</p>
+                        <p className="text-error mt-1 text-xs">{fieldErrors.provenanceLinks}</p>
                       ) : (
                         <p className="text-muted mt-1 text-xs">
                           Optional source links for traceability.

@@ -518,7 +518,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     custom: initialToolsConfig.custom.map((tool) => ({
       ...tool,
-      args: tool.args ? [...tool.args] : undefined,
+      args: [...tool.args],
       provenance: tool.provenance
         ? {
             links: tool.provenance.links ? [...tool.provenance.links] : undefined,
@@ -795,7 +795,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           },
           custom: input.tools.custom.map((tool) => ({
             ...tool,
-            args: tool.args ? [...tool.args] : undefined,
+            args: [...tool.args],
             provenance: tool.provenance
               ? {
                   links: tool.provenance.links ? [...tool.provenance.links] : undefined,

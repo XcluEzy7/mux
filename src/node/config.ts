@@ -247,7 +247,7 @@ function normalizeCustomTool(value: unknown): CustomTool | null {
     return null;
   }
 
-  const args = parseOptionalStringArray(record.args);
+  const args = parseOptionalStringArray(record.args) ?? [];
   const instructions = parseOptionalNonEmptyString(record.instructions);
   const provenance = normalizeCustomToolProvenance(record.provenance);
 
