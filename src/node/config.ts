@@ -602,6 +602,13 @@ export class Config {
   }
 
   private markPendingSelfWrite(): void {
+    // Only track self-write signatures while a watcher is active. Saves that happen
+    // before watch startup should not leave stale markers that can suppress later
+    // external delete/rename events (changedFileSignature === null).
+    if (!this.configFileWatcher) {
+      return;
+    }
+
     this.pendingSelfWriteSignature = this.captureConfigFileSignature();
   }
 
