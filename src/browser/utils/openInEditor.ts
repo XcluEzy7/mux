@@ -53,6 +53,28 @@ function buildSshHostWithOptionalUsername(host: string, username?: string): stri
   return trimmedUsername ? `${trimmedUsername}@${host}` : host;
 }
 
+function resolveTailscaleSshUsername(options: {
+  configuredUsername?: string;
+  detectedUsername?: string | null;
+  isDevelopment: boolean;
+}): string | undefined {
+  const configuredUsername = options.configuredUsername?.trim();
+  if (configuredUsername) {
+    return configuredUsername;
+  }
+
+  if (!options.isDevelopment) {
+    return undefined;
+  }
+
+  return options.detectedUsername?.trim();
+}
+
+function isDevelopmentMode(): boolean {
+  // eslint-disable-next-line no-restricted-globals, no-restricted-syntax
+  return process.env.NODE_ENV !== "production";
+}
+
 function mapHostPathToContainerPath(options: {
   hostWorkspacePath: string;
   containerWorkspacePath: string;
@@ -233,16 +255,51 @@ export async function openInEditor(args: {
         try {
           const tailscaleConfig = await args.api?.server.getTailscaleSsh();
           if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
-            const detectedInfo =
-              tailscaleConfig.username == null
-                ? await args.api?.server.detectTailscale({ force: false })
-                : null;
-            // Pass the remote account through the deep link so editors like Zed
-            // do not guess the client-side username for server connections.
-            sshHost = buildSshHostWithOptionalUsername(
-              tailscaleConfig.sshHost,
-              tailscaleConfig.username ?? detectedInfo?.username ?? undefined
-            );
+            const isDevelopment = isDevelopmentMode();
+            let detectedInfo: Awaited<
+              ReturnType<NonNullable<typeof args.api>["server"]["detectTailscale"]>
+            > | null = null;
+            if (tailscaleConfig.username == null) {
+              try {
+                detectedInfo = await args.api?.server.detectTailscale({ force: false });
+              } catch {
+                // In production, detection failures must not bypass the remote-user requirement.
+                if (!isDevelopment) {
+                  args.openSettings?.("general");
+                  return {
+                    success: false,
+                    error:
+                      "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+                  };
+                }
+              }
+            }
+
+            const tailscaleUsername = resolveTailscaleSshUsername({
+              configuredUsername: tailscaleConfig.username,
+              detectedUsername: detectedInfo?.username,
+              isDevelopment,
+            });
+
+            // In production, require explicit settings to avoid silently using the
+            // client OS account when the editor resolves SSH defaults.
+            if (!tailscaleUsername) {
+              if (!isDevelopment) {
+                args.openSettings?.("general");
+                return {
+                  success: false,
+                  error:
+                    "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+                };
+              }
+            } else {
+              // Pass the remote account through the deep link so editors like Zed
+              // do not guess the client-side username for server connections.
+              sshHost = buildSshHostWithOptionalUsername(
+                tailscaleConfig.sshHost,
+                tailscaleUsername
+              );
+            }
           }
         } catch {
           // Fall through to the standard SSH host resolution below.

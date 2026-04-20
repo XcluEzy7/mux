@@ -31,6 +31,28 @@ interface MockAPIClient {
   server: {
     getSshHost: () => Promise<string | null>;
     setSshHost: (input: { sshHost: string | null }) => Promise<void>;
+    getTailscaleSsh: () => Promise<{
+      enabled: boolean;
+      sshHost?: string;
+      username?: string;
+      proxyCommand: boolean;
+    } | null>;
+    setTailscaleSsh: (input: {
+      config: {
+        enabled: boolean;
+        sshHost?: string;
+        username?: string;
+        proxyCommand: boolean;
+      } | null;
+    }) => Promise<void>;
+    detectTailscale: (input: { force: boolean }) => Promise<{
+      available: boolean;
+      ip: string | null;
+      hostname: string | null;
+      username: string | null;
+      sshEnabled: boolean;
+      tailnet: string | null;
+    }>;
   };
   projects: {
     getDefaultProjectDir: () => Promise<string>;
@@ -217,6 +239,27 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
       server: {
         getSshHost: mock(() => Promise.resolve(null)),
         setSshHost: mock((_input: { sshHost: string | null }) => Promise.resolve()),
+        getTailscaleSsh: mock(() => Promise.resolve(null)),
+        setTailscaleSsh: mock(
+          (_input: {
+            config: {
+              enabled: boolean;
+              sshHost?: string;
+              username?: string;
+              proxyCommand: boolean;
+            } | null;
+          }) => Promise.resolve()
+        ),
+        detectTailscale: mock((_input: { force: boolean }) =>
+          Promise.resolve({
+            available: false,
+            ip: null,
+            hostname: null,
+            username: null,
+            sshEnabled: false,
+            tailnet: null,
+          })
+        ),
       },
       projects: {
         getDefaultProjectDir: mock(() => Promise.resolve("")),

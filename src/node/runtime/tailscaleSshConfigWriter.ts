@@ -82,13 +82,11 @@ function renderTailscaleBlock(hosts: string, user?: string): string {
     "  StrictHostKeyChecking accept-new",
   ];
 
-  // Keep the remote username explicit when we know it so editors like Zed do
-  // not reconnect with the client-side local account by mistake.
-  // Whitespace-only username should fall back to OS username.
+  // Keep the remote username explicit only when configured. Falling back to
+  // the client OS username is unsafe across Windows -> Linux remote flows.
   const trimmedUser = user?.trim();
-  const effectiveUser = trimmedUser && trimmedUser.length > 0 ? trimmedUser : os.userInfo().username;
-  if (effectiveUser) {
-    lines.splice(3, 0, `  User ${effectiveUser}`);
+  if (trimmedUser && trimmedUser.length > 0) {
+    lines.splice(3, 0, `  User ${trimmedUser}`);
   }
 
   lines.push(MUX_TAILSCALE_SSH_BLOCK_END);

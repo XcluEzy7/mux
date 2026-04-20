@@ -34,7 +34,7 @@ describe("ensureTailscaleSshConfig", () => {
     expect(content).toContain("User alice");
   });
 
-  it("falls back to OS username when username is whitespace", async () => {
+  it("omits User when username is whitespace", async () => {
     const sshConfigPath = await createTempSshConfigPath();
 
     await ensureTailscaleSshConfig({
@@ -44,6 +44,6 @@ describe("ensureTailscaleSshConfig", () => {
     });
 
     const content = await fsPromises.readFile(sshConfigPath, "utf8");
-    expect(content).toContain(`User ${os.userInfo().username}`);
+    expect(content).not.toContain("\n  User ");
   });
 });

@@ -12,6 +12,13 @@ import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { Button } from "@/browser/components/Button/Button";
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
+import {
+  HelpIndicator,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/browser/components/Tooltip/Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -511,8 +518,8 @@ export function GeneralSection() {
         ) {
           const next: TailscaleSshConfig = {
             ...currentConfig,
-            sshHost: currentConfig.sshHost ?? (autoHost ?? undefined),
-            username: currentConfig.username ?? (info.username ?? undefined),
+            sshHost: currentConfig.sshHost ?? autoHost ?? undefined,
+            username: currentConfig.username ?? info.username ?? undefined,
           };
           persistTailscaleSsh(next);
         }
@@ -863,9 +870,22 @@ export function GeneralSection() {
 
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1">
-                  <div className="text-foreground text-sm">Remote User</div>
+                  <div className="text-foreground flex items-center gap-1 text-sm">
+                    <span>Remote User</span>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpIndicator aria-label="Remote User setup help">?</HelpIndicator>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          In development, Mux can use the detected server user. In production,
+                          configure this field before using Open in editor.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <div className="text-muted text-xs">
-                    SSH username for the server account that Zed or VS Code should connect as
+                    SSH username for the Linux server account your editor should connect as
                   </div>
                 </div>
                 <Input
