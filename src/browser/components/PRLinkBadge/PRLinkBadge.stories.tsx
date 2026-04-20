@@ -255,7 +255,7 @@ export const DetailsWithReviewerFeed: Story = {
           title: "feat: watcher-driven PR remediation",
         })}
         feed={makeFeed(1701)}
-        onPushToFix={async () => undefined}
+        onPushToFix={() => Promise.resolve()}
       />
     </StoryLayout>
   ),
