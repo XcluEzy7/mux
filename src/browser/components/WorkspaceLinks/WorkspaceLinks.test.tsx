@@ -13,7 +13,7 @@ import { WorkspaceLinks } from "./WorkspaceLinks";
 
 let cleanupDom: (() => void) | null = null;
 
-const mockAPI = {} as ReturnType<typeof APIModule.useAPI>["api"];
+const mockAPI = Object.create(null) as ReturnType<typeof APIModule.useAPI>["api"];
 
 describe("WorkspaceLinks", () => {
   beforeEach(() => {
@@ -23,8 +23,21 @@ describe("WorkspaceLinks", () => {
       () => ({ api: mockAPI }) as unknown as ReturnType<typeof APIModule.useAPI>
     );
     spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(
-      () =>
-        ({
+      (): ReturnType<typeof PRStatusStoreModule.useWorkspacePR> => ({
+        type: "github-pr",
+        owner: "coder",
+        repo: "mux",
+        number: 77,
+        url: "https://github.com/coder/mux/pull/77",
+        detectedAt: 0,
+        occurrenceCount: 1,
+        loading: false,
+      })
+    );
+    spyOn(PRStatusStoreModule, "useWorkspacePullRequestFeed").mockImplementation(
+      (): ReturnType<typeof PRStatusStoreModule.useWorkspacePullRequestFeed> => ({
+        workspaceId: "ws-1",
+        pr: {
           type: "github-pr",
           owner: "coder",
           repo: "mux",
@@ -32,37 +45,21 @@ describe("WorkspaceLinks", () => {
           url: "https://github.com/coder/mux/pull/77",
           detectedAt: 0,
           occurrenceCount: 1,
-          loading: false,
-        }) as ReturnType<typeof PRStatusStoreModule.useWorkspacePR>
-    );
-    spyOn(PRStatusStoreModule, "useWorkspacePullRequestFeed").mockImplementation(
-      () =>
-        ({
-          workspaceId: "ws-1",
-          pr: {
-            type: "github-pr",
-            owner: "coder",
-            repo: "mux",
-            number: 77,
-            url: "https://github.com/coder/mux/pull/77",
-            detectedAt: 0,
-            occurrenceCount: 1,
-          },
-          reviewDecision: null,
-          checksSummary: { hasPendingChecks: false, hasFailedChecks: false },
-          reviewers: [],
-          threads: [],
-          fetchedAt: Date.now(),
-        }) as ReturnType<typeof PRStatusStoreModule.useWorkspacePullRequestFeed>
+        },
+        reviewDecision: null,
+        checksSummary: { hasPendingChecks: false, hasFailedChecks: false },
+        reviewers: [],
+        threads: [],
+        fetchedAt: Date.now(),
+      })
     );
     spyOn(ChatCommandsModule, "forkWorkspace").mockImplementation(() =>
       Promise.resolve({ success: true as const })
     );
     spyOn(SendOptionsModule, "getSendOptionsFromStorage").mockImplementation(
-      () =>
-        ({ model: "openai:gpt-5" }) as ReturnType<
-          typeof SendOptionsModule.getSendOptionsFromStorage
-        >
+      (): ReturnType<typeof SendOptionsModule.getSendOptionsFromStorage> => ({
+        model: "openai:gpt-5",
+      })
     );
     spyOn(PRLinkBadgeModule, "PRLinkBadge").mockImplementation(((
       props: ComponentProps<typeof PRLinkBadgeModule.PRLinkBadge>
@@ -70,10 +67,8 @@ describe("WorkspaceLinks", () => {
       <button
         type="button"
         data-testid="mock-pr-badge"
-        onClick={async () => {
-          if (props.onPushToFix) {
-            await props.onPushToFix("Fix this pull request");
-          }
+        onClick={() => {
+          void props.onPushToFix?.("Fix this pull request");
         }}
       >
         PR #{props.prLink.number}
