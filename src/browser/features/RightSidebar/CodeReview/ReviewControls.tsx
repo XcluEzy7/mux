@@ -5,7 +5,7 @@
 import React from "react";
 import { ArrowLeft, Maximize2 } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { useOptionalTutorial } from "@/browser/contexts/TutorialContext";
 import {
   Tooltip,
   TooltipContent,
@@ -64,14 +64,19 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
-  const { startSequence } = useTutorial();
+  const tutorial = useOptionalTutorial();
 
-  // Show the immersive review tutorial the first time the review panel is visible
+  // Show the immersive review tutorial the first time the review panel is visible.
+  // This UI enhancement must never crash review controls during transient HMR/provider races.
   React.useEffect(() => {
-    // Small delay to ensure the button is rendered and measurable
-    const timer = setTimeout(() => startSequence("review"), 500);
+    if (!tutorial) {
+      return;
+    }
+
+    // Small delay to ensure the button is rendered and measurable.
+    const timer = setTimeout(() => tutorial.startSequence("review"), 500);
     return () => clearTimeout(timer);
-  }, [startSequence]);
+  }, [tutorial]);
 
   // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {

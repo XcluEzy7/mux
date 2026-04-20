@@ -69,8 +69,12 @@ interface TutorialContextValue {
 
 const TutorialContext = createContext<TutorialContextValue | null>(null);
 
+export function useOptionalTutorial(): TutorialContextValue | null {
+  return useContext(TutorialContext);
+}
+
 export function useTutorial(): TutorialContextValue {
-  const context = useContext(TutorialContext);
+  const context = useOptionalTutorial();
   if (!context) {
     throw new Error("useTutorial must be used within a TutorialProvider");
   }
