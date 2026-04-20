@@ -17,6 +17,7 @@ import {
   Server,
   Lock,
   HeartPulse,
+  Wrench,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -30,6 +31,7 @@ import { ModelsSection } from "./Sections/ModelsSection";
 import { System1Section } from "./Sections/System1Section";
 import { GovernorSection } from "./Sections/GovernorSection";
 import { Button } from "@/browser/components/Button/Button";
+import { ToolsSettingsSection } from "./Sections/ToolsSettingsSection";
 import { MCPSettingsSection } from "./Sections/MCPSettingsSection";
 import { SecretsSection } from "./Sections/SecretsSection";
 import { LayoutsSection } from "./Sections/LayoutsSection";
@@ -65,6 +67,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Models",
     icon: <Cpu className="h-4 w-4" />,
     component: ModelsSection,
+  },
+  {
+    id: "tools",
+    label: "Tools",
+    icon: <Wrench className="h-4 w-4" />,
+    component: ToolsSettingsSection,
   },
   {
     id: "mcp",
