@@ -17,7 +17,12 @@ void mock.module("@/browser/features/SplashScreens/SplashScreenProvider", () => 
   useIsSplashScreenActive: () => false,
 }));
 
-import { TutorialProvider, resolveTutorialSandboxOptIn, useTutorial } from "./TutorialContext";
+import {
+  TutorialProvider,
+  resolveTutorialSandboxOptIn,
+  useOptionalTutorial,
+  useTutorial,
+} from "./TutorialContext";
 
 function TutorialHarness() {
   const tutorial = useTutorial();
@@ -30,6 +35,17 @@ function TutorialHarness() {
       <span data-testid="tutorial-disabled">{String(tutorial.isTutorialDisabled())}</span>
     </div>
   );
+}
+
+function OptionalTutorialHarness() {
+  const tutorial = useOptionalTutorial();
+
+  return <span data-testid="optional-tutorial-present">{String(tutorial !== null)}</span>;
+}
+
+function StrictTutorialOutsideProviderHarness() {
+  useTutorial();
+  return <div>unreachable</div>;
 }
 
 function readStoredTutorialState(): TutorialState | null {
@@ -114,6 +130,27 @@ describe("TutorialContext", () => {
         browserEnableTutorialsInSandbox: true,
       })
     ).toBe(true);
+  });
+
+  test("useTutorial stays strict outside TutorialProvider", () => {
+    expect(() => render(<StrictTutorialOutsideProviderHarness />)).toThrow(
+      "useTutorial must be used within a TutorialProvider"
+    );
+  });
+
+  test("useOptionalTutorial returns null outside TutorialProvider", () => {
+    const view = render(<OptionalTutorialHarness />);
+    expect(view.getByTestId("optional-tutorial-present").textContent).toBe("false");
+  });
+
+  test("useOptionalTutorial returns context value inside TutorialProvider", () => {
+    const view = render(
+      <TutorialProvider>
+        <OptionalTutorialHarness />
+      </TutorialProvider>
+    );
+
+    expect(view.getByTestId("optional-tutorial-present").textContent).toBe("true");
   });
 
   test("keeps normal tutorial behavior when no sandbox override is present", async () => {
