@@ -40,6 +40,10 @@ function escapeToolNameForRegex(toolName: string): string {
   return toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function buildExactToolNameRegex(toolName: string): string {
+  return `^${escapeToolNameForRegex(toolName)}$`;
+}
+
 export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
   const toolsDefaults = cfg.tools?.defaults;
   if (!toolsDefaults) {
@@ -57,14 +61,14 @@ export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
       { action: "disable", regex_match: ".*" },
       ...validToolNames.map((name) => ({
         action: "enable" as const,
-        regex_match: escapeToolNameForRegex(name),
+        regex_match: buildExactToolNameRegex(name),
       })),
     ];
   }
 
   return validToolNames.map((name) => ({
     action: "disable" as const,
-    regex_match: escapeToolNameForRegex(name),
+    regex_match: buildExactToolNameRegex(name),
   }));
 }
 

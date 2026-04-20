@@ -100,6 +100,37 @@ describe("MCPConfigService", () => {
     expect(servers["custom-tool:disabled"]).toBeUndefined();
   });
 
+  test("listServers does not let synthetic custom-tool servers overwrite explicit servers", async () => {
+    await configService.addServer("custom-tool:echo", {
+      transport: "stdio",
+      command: "user-defined-server",
+    });
+
+    await config.editConfig((cfg) => {
+      cfg.tools = {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "echo",
+            label: "Echo",
+            command: "npx",
+            args: ["@acme/echo"],
+            enabled: true,
+          },
+        ],
+      };
+      return cfg;
+    });
+
+    const servers = await configService.listServers();
+
+    expect(servers["custom-tool:echo"]).toEqual({
+      transport: "stdio",
+      command: "user-defined-server",
+      disabled: false,
+    });
+  });
+
   test("listServers ignores repo overrides for untrusted projects", async () => {
     await configService.addServer("global-only", {
       transport: "stdio",

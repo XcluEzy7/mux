@@ -941,6 +941,41 @@ describe("Config", () => {
     expect(notificationCount).toBe(1);
   });
 
+  it("does not swallow immediate external edits after a self save", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    let notificationCount = 0;
+    const notificationPromise = new Promise<void>((resolve) => {
+      const unsubscribe = config.onConfigChanged(() => {
+        notificationCount += 1;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    const loaded = config.loadConfigOrDefault();
+    loaded.routePriority = ["direct"];
+    await config.saveConfig(loaded);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(notificationCount).toBe(0);
+
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({ projects: [], routePriority: ["openai:gpt-4o"] })
+    );
+
+    await Promise.race([
+      notificationPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for external config change")), 2000)
+      ),
+    ]);
+
+    expect(notificationCount).toBe(1);
+  });
+
   describe("tools config", () => {
     it("normalizes invalid tools config into defaults", () => {
       const configFile = path.join(tempDir, "config.json");
@@ -964,6 +999,40 @@ describe("Config", () => {
         defaults: { mode: "allow_all_except", toolNames: ["bash"] },
         custom: [{ id: "tool-1", label: "Tool 1", command: "npx", args: [], enabled: true }],
       });
+    });
+  });
+
+  it("normalizes custom tool provenance links while preserving intentional empty args", () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({
+        tools: {
+          defaults: { mode: "allow_all_except", toolNames: [] },
+          custom: [
+            {
+              id: "tool-1",
+              label: "Tool 1",
+              command: "npx",
+              args: ["--flag", "", "tail"],
+              enabled: true,
+              provenance: {
+                links: [" https://docs.example.com ", "", "   "],
+              },
+            },
+          ],
+        },
+      })
+    );
+
+    const loaded = config.loadConfigOrDefault();
+
+    expect(loaded.tools?.custom[0]).toMatchObject({
+      id: "tool-1",
+      args: ["--flag", "", "tail"],
+      provenance: {
+        links: ["https://docs.example.com"],
+      },
     });
   });
 

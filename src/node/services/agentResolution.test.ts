@@ -24,7 +24,7 @@ describe("buildGlobalToolsPolicy", () => {
       custom: [],
     };
 
-    expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: "bash" }]);
+    expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: "^bash$" }]);
   });
 
   it("builds deny_all_except blanket disable rule for an empty allowlist", () => {
@@ -52,8 +52,8 @@ describe("buildGlobalToolsPolicy", () => {
 
     expect(buildGlobalToolsPolicy(config)).toEqual([
       { action: "disable", regex_match: ".*" },
-      { action: "enable", regex_match: "file_read" },
-      { action: "enable", regex_match: "mcp\\.server\\.tool\\+name" },
+      { action: "enable", regex_match: "^file_read$" },
+      { action: "enable", regex_match: "^mcp\\.server\\.tool\\+name$" },
     ]);
   });
 });
