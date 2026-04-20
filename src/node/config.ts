@@ -555,6 +555,7 @@ export class Config {
   private configFileWatcher: fs.FSWatcher | null = null;
   private configFileWatchInitialized = false;
   private pendingSelfWriteSignature: string | null = null;
+  private watchedConfigFileSignature: string | null = null;
   private readonly emitter = new EventEmitter();
 
   constructor(rootDir?: string) {
@@ -588,6 +589,7 @@ export class Config {
 
     this.configFileWatcher.close();
     this.configFileWatcher = null;
+    this.watchedConfigFileSignature = null;
   }
 
   private captureConfigFileSignature(): string | null {
@@ -612,23 +614,35 @@ export class Config {
       const parentDir = path.dirname(this.configFile);
 
       try {
+        this.watchedConfigFileSignature = this.captureConfigFileSignature();
         this.configFileWatcher = fs.watch(parentDir, (_eventType, filename) => {
           const changedFileName = filename?.toString();
+          const configFileName = path.basename(this.configFile);
+          const changedFileSignature = this.captureConfigFileSignature();
 
-          if (changedFileName && changedFileName !== path.basename(this.configFile)) {
+          if (changedFileName && changedFileName !== configFileName) {
             return;
           }
 
-          const changedFileSignature = this.captureConfigFileSignature();
+          if (this.pendingSelfWriteSignature !== null && changedFileSignature === null) {
+            return;
+          }
+
+          if (!changedFileName && changedFileSignature === this.watchedConfigFileSignature) {
+            return;
+          }
+
           if (
             this.pendingSelfWriteSignature !== null &&
             changedFileSignature !== null &&
             changedFileSignature === this.pendingSelfWriteSignature
           ) {
+            this.watchedConfigFileSignature = changedFileSignature;
             return;
           }
 
           this.pendingSelfWriteSignature = null;
+          this.watchedConfigFileSignature = changedFileSignature;
           this.notifyConfigChanged();
         });
       } catch (error) {
