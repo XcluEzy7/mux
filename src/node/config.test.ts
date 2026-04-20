@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -939,6 +940,47 @@ describe("Config", () => {
     ]);
 
     expect(notificationCount).toBe(1);
+  });
+
+  it("ignores missing-filename parent-dir events when config signature is unchanged", () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    let watchCallback:
+      | ((eventType: string, filename: string | Buffer | null | undefined) => void)
+      | null = null;
+    const watchSpy = spyOn(fs, "watch").mockImplementation(
+      (...args: Parameters<typeof fs.watch>) => {
+        const callback = args[1];
+        if (callback && typeof callback === "function") {
+          watchCallback = callback as (
+            eventType: string,
+            filename: string | Buffer | null | undefined
+          ) => void;
+        }
+
+        return {
+          close: () => undefined,
+        } as fs.FSWatcher;
+      }
+    );
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      expect(watchCallback).not.toBeNull();
+
+      fs.writeFileSync(path.join(tempDir, "other.json"), JSON.stringify({ changed: true }));
+      watchCallback?.("change", undefined);
+
+      expect(notifications).toBe(0);
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
   });
 
   it("does not swallow immediate external edits after a self save", async () => {
