@@ -40,8 +40,10 @@ function escapeToolNameForRegex(toolName: string): string {
   return toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildExactToolNameRegex(toolName: string): string {
-  return `^${escapeToolNameForRegex(toolName)}$`;
+function buildLiteralToolNameRegex(toolName: string): string {
+  // regex_match is anchored by the tool policy evaluator (`^...$`).
+  // Keep this value unanchored so names are not double-anchored.
+  return escapeToolNameForRegex(toolName);
 }
 
 export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
@@ -61,14 +63,14 @@ export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
       { action: "disable", regex_match: ".*" },
       ...validToolNames.map((name) => ({
         action: "enable" as const,
-        regex_match: buildExactToolNameRegex(name),
+        regex_match: buildLiteralToolNameRegex(name),
       })),
     ];
   }
 
   return validToolNames.map((name) => ({
     action: "disable" as const,
-    regex_match: buildExactToolNameRegex(name),
+    regex_match: buildLiteralToolNameRegex(name),
   }));
 }
 
@@ -78,25 +80,59 @@ export interface ComposeEffectiveToolPolicyOptions {
   globalToolsPolicy: ToolPolicy;
 }
 
+const RUNTIME_SAFETY_TOOL_POLICY_KEYS = new Set([
+  "disable:task",
+  "disable:task_.*",
+  "disable:ask_user_question",
+  "disable:switch_agent",
+  "disable:propose_plan",
+  "disable:agent_report",
+  "require:switch_agent",
+  "require:propose_plan",
+  "require:agent_report",
+  "enable:advisor",
+  "disable:advisor",
+]);
+
+function isRuntimeSafetyPolicyFilter(filter: ToolPolicy[number]): boolean {
+  return RUNTIME_SAFETY_TOOL_POLICY_KEYS.has(`${filter.action}:${filter.regex_match}`);
+}
+
 export function composeEffectiveToolPolicy({
   agentToolPolicy,
   callerToolPolicy,
   globalToolsPolicy,
 }: ComposeEffectiveToolPolicyOptions): ToolPolicy | undefined {
-  // Caller require policies (e.g. task completion enforcement) must take precedence.
-  // Drop agent-level require filters in that case to avoid multiple-required-tool conflicts.
+  const runtimeSafetyPolicy = agentToolPolicy.filter(isRuntimeSafetyPolicyFilter);
+  const agentPolicyWithoutRuntimeSafety = agentToolPolicy.filter(
+    (filter) => !isRuntimeSafetyPolicyFilter(filter)
+  );
+
   const callerRequiresTool =
     callerToolPolicy?.some((filter) => filter.action === "require") === true;
-  const agentToolPolicyForComposition = callerRequiresTool
-    ? agentToolPolicy.filter((filter) => filter.action !== "require")
-    : agentToolPolicy;
+  const runtimeRequiresTool =
+    runtimeSafetyPolicy.some((filter) => filter.action === "require") === true;
 
-  // Apply global defaults before agent/runtime policy so runtime hard-deny and required-tool
-  // rules in the resolved agent policy remain authoritative.
+  // Caller require policies can override agent-authored require patterns, but runtime safety
+  // requirements (subagent completion, switch_agent gating) remain authoritative.
+  const agentPolicyForComposition = callerRequiresTool
+    ? agentPolicyWithoutRuntimeSafety.filter((filter) => filter.action !== "require")
+    : agentPolicyWithoutRuntimeSafety;
+  const callerPolicyForComposition =
+    callerRequiresTool && runtimeRequiresTool
+      ? callerToolPolicy?.filter((filter) => filter.action !== "require")
+      : callerToolPolicy;
+
+  // Order of precedence (last matching filter wins):
+  // 1) agent-authored defaults
+  // 2) global defaults from config
+  // 3) runtime safety constraints (must not be overridden)
+  // 4) caller restrictions
   const composedPolicy = [
+    ...agentPolicyForComposition,
     ...globalToolsPolicy,
-    ...agentToolPolicyForComposition,
-    ...(callerToolPolicy ?? []),
+    ...runtimeSafetyPolicy,
+    ...(callerPolicyForComposition ?? []),
   ];
 
   return composedPolicy.length > 0 ? composedPolicy : undefined;

@@ -25,7 +25,7 @@ describe("buildGlobalToolsPolicy", () => {
       custom: [],
     };
 
-    expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: "^bash$" }]);
+    expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: "bash" }]);
   });
 
   it("builds deny_all_except blanket disable rule for an empty allowlist", () => {
@@ -53,30 +53,53 @@ describe("buildGlobalToolsPolicy", () => {
 
     expect(buildGlobalToolsPolicy(config)).toEqual([
       { action: "disable", regex_match: ".*" },
-      { action: "enable", regex_match: "^file_read$" },
-      { action: "enable", regex_match: "^mcp\\.server\\.tool\\+name$" },
+      { action: "enable", regex_match: "file_read" },
+      { action: "enable", regex_match: "mcp\\.server\\.tool\\+name" },
     ]);
   });
 });
 
 describe("composeEffectiveToolPolicy", () => {
-  it("keeps runtime hard-deny precedence over global allow defaults", () => {
+  it("keeps global defaults effective over agent-authored allow rules", () => {
     const policy = composeEffectiveToolPolicy({
-      globalToolsPolicy: [{ action: "enable", regex_match: "^bash$" }],
-      agentToolPolicy: [{ action: "disable", regex_match: "bash" }],
+      globalToolsPolicy: [{ action: "disable", regex_match: "bash" }],
+      agentToolPolicy: [{ action: "enable", regex_match: ".*" }],
       callerToolPolicy: undefined,
     });
 
-    expect(applyToolPolicyToNames(["bash"], policy)).toEqual([]);
+    expect(applyToolPolicyToNames(["bash", "file_read"], policy)).toEqual(["file_read"]);
+  });
+
+  it("keeps runtime hard-deny precedence over global allow defaults", () => {
+    const policy = composeEffectiveToolPolicy({
+      globalToolsPolicy: [{ action: "enable", regex_match: "switch_agent" }],
+      agentToolPolicy: [
+        { action: "enable", regex_match: ".*" },
+        { action: "disable", regex_match: "switch_agent" },
+      ],
+      callerToolPolicy: undefined,
+    });
+
+    expect(applyToolPolicyToNames(["switch_agent"], policy)).toEqual([]);
   });
 
   it("drops agent require rules when caller provides its own required tool", () => {
+    const policy = composeEffectiveToolPolicy({
+      globalToolsPolicy: [],
+      agentToolPolicy: [{ action: "require", regex_match: "file_read" }],
+      callerToolPolicy: [{ action: "require", regex_match: "task" }],
+    });
+
+    expect(policy).toEqual([{ action: "require", regex_match: "task" }]);
+  });
+
+  it("keeps runtime required-tool constraints stronger than caller requires", () => {
     const policy = composeEffectiveToolPolicy({
       globalToolsPolicy: [],
       agentToolPolicy: [{ action: "require", regex_match: "agent_report" }],
       callerToolPolicy: [{ action: "require", regex_match: "task" }],
     });
 
-    expect(policy).toEqual([{ action: "require", regex_match: "task" }]);
+    expect(policy).toEqual([{ action: "require", regex_match: "agent_report" }]);
   });
 });

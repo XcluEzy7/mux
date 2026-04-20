@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isValidUrl, parseQuotedArgInput, stringifyArgsForInput } from "./ToolsSettingsSection";
+import {
+  isValidUrl,
+  parseMultilineValues,
+  parseQuotedArgInput,
+  stringifyArgsForInput,
+} from "./ToolsSettingsSection";
 
 describe("parseQuotedArgInput", () => {
   test("parses unquoted and quoted args in order", () => {
@@ -51,6 +56,14 @@ describe("isValidUrl", () => {
     expect(isValidUrl("http://localhost:8080/health")).toBe(true);
     expect(isValidUrl("javascript:alert(1)")).toBe(false);
     expect(isValidUrl("data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==")).toBe(false);
+  });
+});
+
+describe("parseMultilineValues", () => {
+  test("splits newline-delimited links and trims each line", () => {
+    expect(
+      parseMultilineValues("  https://example.com/docs?a=1,2  \n\n https://example.com/guide ")
+    ).toEqual(["https://example.com/docs?a=1,2", "https://example.com/guide"]);
   });
 });
 

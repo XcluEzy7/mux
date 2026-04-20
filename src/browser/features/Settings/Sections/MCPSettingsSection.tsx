@@ -780,9 +780,6 @@ export const MCPSettingsSection: React.FC = () => {
     mcpAllowUserDefined?.stdio === false && mcpAllowUserDefined.remote === false
   );
   const [servers, setServers] = useState<Record<string, MCPServerInfo>>({});
-  const [syntheticCustomToolServerCommandMap, setSyntheticCustomToolServerCommandMap] = useState<
-    Record<string, string>
-  >({});
   const [loading, setLoading] = useState(false);
   const [globalSecretKeys, setGlobalSecretKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -857,11 +854,8 @@ export const MCPSettingsSection: React.FC = () => {
     if (!api) return;
     setLoading(true);
     try {
-      const [mcpResult, config] = await Promise.all([api.mcp.list({}), api.config.getConfig()]);
+      const mcpResult = await api.mcp.list({ includeSyntheticCustomToolServers: false });
       setServers(mcpResult ?? {});
-      setSyntheticCustomToolServerCommandMap(
-        buildSyntheticCustomToolServerCommandMap(config.tools?.custom)
-      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load MCP servers");
@@ -1182,12 +1176,7 @@ export const MCPSettingsSection: React.FC = () => {
         }).validation
       : { errors: [], warnings: [] };
 
-  const visibleServers: Record<string, MCPServerInfo> = Object.fromEntries(
-    Object.entries(servers).filter(
-      ([name, serverInfo]) =>
-        !shouldHideSyntheticCustomToolServer(name, serverInfo, syntheticCustomToolServerCommandMap)
-    )
-  );
+  const visibleServers: Record<string, MCPServerInfo> = servers;
 
   return (
     <div className="space-y-6">
