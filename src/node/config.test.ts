@@ -1093,6 +1093,55 @@ describe("Config", () => {
     }
   });
 
+  it("clears pending self-write state when config watcher restarts", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+
+      const unsubscribeFirst = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+      expect(watchSpy.mock.calls.length).toBe(1);
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      // Stop the watcher before its self-write event is processed.
+      unsubscribeFirst();
+
+      const unsubscribeSecond = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+      expect(watchSpy.mock.calls.length).toBe(2);
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      fs.rmSync(configFile, { force: true });
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+      unsubscribeSecond();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
   describe("tools config", () => {
     it("normalizes invalid tools config into defaults", () => {
       const configFile = path.join(tempDir, "config.json");
