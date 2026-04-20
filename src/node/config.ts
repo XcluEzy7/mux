@@ -583,6 +583,9 @@ export class Config {
   }
 
   private stopConfigFileWatch(): void {
+    // Reset pending self-write state so each watcher session starts clean.
+    this.pendingSelfWriteSignature = null;
+
     if (!this.configFileWatcher) {
       return;
     }
