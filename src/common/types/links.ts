@@ -90,3 +90,47 @@ export interface GitHubPRLinkWithStatus extends GitHubPRLink {
   /** Error message if status fetch failed */
   error?: string;
 }
+
+export type PullRequestReviewerCategory =
+  | "human"
+  | "codex"
+  | "coderabbit"
+  | "greptile"
+  | "unknown-bot";
+
+export interface PullRequestReviewerIdentity {
+  login: string;
+  isBot: boolean;
+  category: PullRequestReviewerCategory;
+}
+
+export interface PullRequestReviewComment {
+  id: string;
+  url: string | null;
+  body: string;
+  path: string | null;
+  line: number | null;
+  createdAt: string | null;
+  replyToId: string | null;
+  author: PullRequestReviewerIdentity;
+}
+
+export interface PullRequestReviewThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: PullRequestReviewComment[];
+}
+
+export interface WorkspacePullRequestFeed {
+  workspaceId: string;
+  pr: GitHubPRLinkWithStatus | null;
+  reviewDecision: string | null;
+  checksSummary: {
+    hasPendingChecks: boolean;
+    hasFailedChecks: boolean;
+  };
+  reviewers: PullRequestReviewerIdentity[];
+  threads: PullRequestReviewThread[];
+  fetchedAt: number;
+}

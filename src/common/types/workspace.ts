@@ -26,6 +26,7 @@ import type {
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceMetadataSchema,
+  WorkspacePullRequestFeedSchema,
 } from "../orpc/schemas";
 
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>;
@@ -45,3 +46,5 @@ export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type FrontendWorkspaceMetadata = z.infer<typeof FrontendWorkspaceMetadataSchema>;
 
 export type WorkspaceActivitySnapshot = z.infer<typeof WorkspaceActivitySnapshotSchema>;
+
+export type WorkspacePullRequestFeed = z.infer<typeof WorkspacePullRequestFeedSchema>;

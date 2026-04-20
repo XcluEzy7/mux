@@ -3363,6 +3363,16 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.getProjectGitStatuses(input.workspaceId, input.baseRef);
         }),
+      getPullRequestFeed: t
+        .input(schemas.workspace.getPullRequestFeed.input)
+        .output(schemas.workspace.getPullRequestFeed.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.getPullRequestFeed(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
       archiveMergedInProject: t
         .input(schemas.workspace.archiveMergedInProject.input)
         .output(schemas.workspace.archiveMergedInProject.output)

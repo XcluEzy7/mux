@@ -45,6 +45,7 @@ import {
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceHeartbeatSettingsSchema,
+  WorkspacePullRequestFeedSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -1081,6 +1082,10 @@ export const workspace = {
       baseRef: z.string().nullish(),
     }),
     output: z.array(ProjectGitStatusResultSchema),
+  },
+  getPullRequestFeed: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(WorkspacePullRequestFeedSchema, z.string()),
   },
   archiveMergedInProject: {
     input: z.object({ projectPath: z.string() }),

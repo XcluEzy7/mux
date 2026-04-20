@@ -247,3 +247,92 @@ export const GitStatusSchema = z.object({
   incomingAdditions: z.number(),
   incomingDeletions: z.number(),
 });
+
+export const PullRequestReviewerCategorySchema = z.enum([
+  "human",
+  "codex",
+  "coderabbit",
+  "greptile",
+  "unknown-bot",
+]);
+
+export const PullRequestReviewerIdentitySchema = z.object({
+  login: z.string(),
+  isBot: z.boolean(),
+  category: PullRequestReviewerCategorySchema,
+});
+
+export const PullRequestReviewCommentSchema = z.object({
+  id: z.string(),
+  url: z.string().nullable(),
+  body: z.string(),
+  path: z.string().nullable(),
+  line: z.number().int().nullable(),
+  createdAt: z.string().nullable(),
+  replyToId: z.string().nullable(),
+  author: PullRequestReviewerIdentitySchema,
+});
+
+export const PullRequestReviewThreadSchema = z.object({
+  id: z.string(),
+  isResolved: z.boolean(),
+  isOutdated: z.boolean(),
+  comments: z.array(PullRequestReviewCommentSchema),
+});
+
+export const MergeQueueEntrySchema = z.object({
+  state: z.string(),
+  position: z.number().int().nonnegative().nullable(),
+});
+
+export const GitHubPRStatusSchema = z.object({
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+  mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
+  mergeStateStatus: z.enum([
+    "CLEAN",
+    "BLOCKED",
+    "BEHIND",
+    "DIRTY",
+    "UNSTABLE",
+    "HAS_HOOKS",
+    "DRAFT",
+    "UNKNOWN",
+  ]),
+  title: z.string(),
+  isDraft: z.boolean(),
+  headRefName: z.string(),
+  baseRefName: z.string(),
+  hasPendingChecks: z.boolean().optional(),
+  hasFailedChecks: z.boolean().optional(),
+  mergeQueueEntry: MergeQueueEntrySchema.nullish(),
+  fetchedAt: z.number().int().nonnegative(),
+});
+
+export const GitHubPRLinkSchema = z.object({
+  type: z.literal("github-pr"),
+  url: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  number: z.number().int().nonnegative(),
+  detectedAt: z.number().int().nonnegative(),
+  occurrenceCount: z.number().int().nonnegative(),
+});
+
+export const GitHubPRLinkWithStatusSchema = GitHubPRLinkSchema.extend({
+  status: GitHubPRStatusSchema.optional(),
+  loading: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+export const WorkspacePullRequestFeedSchema = z.object({
+  workspaceId: z.string(),
+  pr: GitHubPRLinkWithStatusSchema.nullable(),
+  reviewDecision: z.string().nullable(),
+  checksSummary: z.object({
+    hasPendingChecks: z.boolean(),
+    hasFailedChecks: z.boolean(),
+  }),
+  reviewers: z.array(PullRequestReviewerIdentitySchema),
+  threads: z.array(PullRequestReviewThreadSchema),
+  fetchedAt: z.number().int().nonnegative(),
+});
