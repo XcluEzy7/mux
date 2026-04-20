@@ -467,8 +467,8 @@ describe("Config", () => {
       });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
-        agentAiDefaults?: Record<string, { modelString?: string }>;
-        subagentAiDefaults?: Record<string, { modelString?: string }>;
+        agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
+        subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
       };
 
       expect(raw.agentAiDefaults).toEqual({
@@ -946,24 +946,13 @@ describe("Config", () => {
     const configFile = path.join(tempDir, "config.json");
     fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
 
-    let watchCallback:
-      | ((eventType: string, filename: string | Buffer | null | undefined) => void)
-      | null = null;
-    const watchSpy = spyOn(fs, "watch").mockImplementation(
-      (...args: Parameters<typeof fs.watch>) => {
-        const callback = args[1];
-        if (callback && typeof callback === "function") {
-          watchCallback = callback as (
-            eventType: string,
-            filename: string | Buffer | null | undefined
-          ) => void;
-        }
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
 
-        return {
-          close: () => undefined,
-        } as fs.FSWatcher;
-      }
-    );
+    const watchSpy = spyOn(fs, "watch");
 
     try {
       let notifications = 0;
@@ -971,10 +960,15 @@ describe("Config", () => {
         notifications += 1;
       });
 
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
       expect(watchCallback).not.toBeNull();
 
       fs.writeFileSync(path.join(tempDir, "other.json"), JSON.stringify({ changed: true }));
-      watchCallback?.("change", undefined);
+      watchCallback?.("change", null);
 
       expect(notifications).toBe(0);
       unsubscribe();
