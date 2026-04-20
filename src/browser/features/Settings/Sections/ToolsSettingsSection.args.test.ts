@@ -28,6 +28,13 @@ describe("parseQuotedArgInput", () => {
     });
   });
 
+  test("preserves literal backslashes for unknown escapes inside double quotes", () => {
+    expect(parseQuotedArgInput('run "\\d+" "C:\\tools\\bin"')).toEqual({
+      args: ["run", "\\d+", "C:\\tools\\bin"],
+      error: null,
+    });
+  });
+
   test("preserves intentionally empty quoted args", () => {
     expect(parseQuotedArgInput('python "" --stdio')).toEqual({
       args: ["python", "", "--stdio"],

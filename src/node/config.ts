@@ -637,6 +637,7 @@ export class Config {
             changedFileSignature !== null &&
             changedFileSignature === this.pendingSelfWriteSignature
           ) {
+            this.pendingSelfWriteSignature = null;
             this.watchedConfigFileSignature = changedFileSignature;
             return;
           }
