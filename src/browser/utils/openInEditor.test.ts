@@ -25,6 +25,25 @@ async function withWindow<T>(windowValue: unknown, fn: () => Promise<T> | T): Pr
   }
 }
 
+async function withNodeEnv<T>(value: string | undefined, fn: () => Promise<T> | T): Promise<T> {
+  const previous = process.env.NODE_ENV;
+  if (value === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = value;
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previous;
+    }
+  }
+}
+
 describe("openInEditor", () => {
   const workspaceId = "ws-123";
   const filePath = "/home/user/project/plan.md";
@@ -151,6 +170,95 @@ describe("openInEditor", () => {
     expect(target).toBe("_blank");
     expect(url.endsWith(filePath)).toBe(false);
     expect(url.endsWith(`/${parentDir}`)).toBe(true);
+  });
+
+  test("uses detected server username in development when remote user is unset", async () => {
+    const calls: OpenCall[] = [];
+
+    const api = {
+      server: {
+        getTailscaleSsh: () =>
+          Promise.resolve({
+            enabled: true,
+            sshHost: "devbox.tailnet.ts.net",
+            proxyCommand: true,
+          }),
+        detectTailscale: () => Promise.resolve({ username: "serverdev" }),
+      },
+    } as unknown as APIClient;
+
+    const result = await withNodeEnv("development", () =>
+      withWindow(
+        createMockWindow(calls, {
+          hostname: "mux.remote.example",
+          editorConfig: { editor: "zed" },
+          experiments: {
+            [getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH)]: true,
+          },
+        }),
+        () =>
+          openInEditor({
+            api,
+            workspaceId,
+            targetPath: filePath,
+            isFile: true,
+          })
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      ["zed://ssh/serverdev@devbox.tailnet.ts.net/home/user/project/plan.md:1:1", "_blank"],
+    ]);
+  });
+
+  test("requires configured remote user in production for tailscale ssh", async () => {
+    const calls: OpenCall[] = [];
+    const openSettingsCalls: string[] = [];
+
+    const api = {
+      server: {
+        getTailscaleSsh: () =>
+          Promise.resolve({
+            enabled: true,
+            sshHost: "devbox.tailnet.ts.net",
+            proxyCommand: true,
+          }),
+        detectTailscale: () => Promise.resolve({ username: "serverprod" }),
+      },
+    } as unknown as APIClient;
+
+    const result = await withNodeEnv("production", () =>
+      withWindow(
+        createMockWindow(calls, {
+          hostname: "mux.remote.example",
+          editorConfig: { editor: "zed" },
+          experiments: {
+            [getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH)]: true,
+          },
+        }),
+        () =>
+          openInEditor({
+            api,
+            openSettings: (section) => {
+              if (section) {
+                openSettingsCalls.push(section);
+              }
+            },
+            workspaceId,
+            targetPath: filePath,
+            isFile: true,
+          })
+      )
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+    });
+    expect(calls).toEqual([]);
+    expect(openSettingsCalls).toEqual(["general"]);
   });
 
   test("uses the remote Tailscale username for zed browser deep links", async () => {
