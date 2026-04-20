@@ -28,6 +28,7 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
+import type { CustomTool } from "@/common/config/schemas";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";
 import type { MCPOAuthPendingServerConfig } from "@/common/types/mcpOauth";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
@@ -40,7 +41,61 @@ import {
 import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
+
+function buildSyntheticCustomToolCommand(command: string, args?: string[]): string {
+  return [command, ...(args ?? [])].map((arg) => shellQuote(arg)).join(" ");
+}
+
+export function buildSyntheticCustomToolServerCommandMap(
+  customTools: CustomTool[] | undefined
+): Record<string, string> {
+  if (!customTools || customTools.length === 0) {
+    return {};
+  }
+
+  const map: Record<string, string> = {};
+  for (const tool of customTools) {
+    if (!tool.enabled) {
+      continue;
+    }
+
+    const trimmedId = tool.id.trim();
+    if (trimmedId.length === 0) {
+      continue;
+    }
+
+    map[`${CUSTOM_TOOL_MCP_SERVER_PREFIX}${trimmedId}`] = buildSyntheticCustomToolCommand(
+      tool.command,
+      tool.args
+    );
+  }
+
+  return map;
+}
+
+export function shouldHideSyntheticCustomToolServer(
+  serverName: string,
+  serverInfo: MCPServerInfo,
+  syntheticServerCommandMap: Record<string, string>
+): boolean {
+  if (!serverName.startsWith(CUSTOM_TOOL_MCP_SERVER_PREFIX)) {
+    return false;
+  }
+
+  const expectedCommand = syntheticServerCommandMap[serverName];
+  if (!expectedCommand) {
+    return false;
+  }
+
+  return (
+    serverInfo.transport === "stdio" &&
+    serverInfo.command === expectedCommand &&
+    serverInfo.disabled === false &&
+    serverInfo.toolAllowlist === undefined
+  );
+}
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -725,6 +780,9 @@ export const MCPSettingsSection: React.FC = () => {
     mcpAllowUserDefined?.stdio === false && mcpAllowUserDefined.remote === false
   );
   const [servers, setServers] = useState<Record<string, MCPServerInfo>>({});
+  const [syntheticCustomToolServerCommandMap, setSyntheticCustomToolServerCommandMap] = useState<
+    Record<string, string>
+  >({});
   const [loading, setLoading] = useState(false);
   const [globalSecretKeys, setGlobalSecretKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -799,8 +857,11 @@ export const MCPSettingsSection: React.FC = () => {
     if (!api) return;
     setLoading(true);
     try {
-      const mcpResult = await api.mcp.list({});
+      const [mcpResult, config] = await Promise.all([api.mcp.list({}), api.config.getConfig()]);
       setServers(mcpResult ?? {});
+      setSyntheticCustomToolServerCommandMap(
+        buildSyntheticCustomToolServerCommandMap(config.tools?.custom)
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load MCP servers");
@@ -1122,7 +1183,10 @@ export const MCPSettingsSection: React.FC = () => {
       : { errors: [], warnings: [] };
 
   const visibleServers: Record<string, MCPServerInfo> = Object.fromEntries(
-    Object.entries(servers).filter(([name]) => !name.startsWith(CUSTOM_TOOL_MCP_SERVER_PREFIX))
+    Object.entries(servers).filter(
+      ([name, serverInfo]) =>
+        !shouldHideSyntheticCustomToolServer(name, serverInfo, syntheticCustomToolServerCommandMap)
+    )
   );
 
   return (

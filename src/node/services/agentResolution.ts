@@ -72,6 +72,36 @@ export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
   }));
 }
 
+export interface ComposeEffectiveToolPolicyOptions {
+  agentToolPolicy: ToolPolicy;
+  callerToolPolicy: ToolPolicy | undefined;
+  globalToolsPolicy: ToolPolicy;
+}
+
+export function composeEffectiveToolPolicy({
+  agentToolPolicy,
+  callerToolPolicy,
+  globalToolsPolicy,
+}: ComposeEffectiveToolPolicyOptions): ToolPolicy | undefined {
+  // Caller require policies (e.g. task completion enforcement) must take precedence.
+  // Drop agent-level require filters in that case to avoid multiple-required-tool conflicts.
+  const callerRequiresTool =
+    callerToolPolicy?.some((filter) => filter.action === "require") === true;
+  const agentToolPolicyForComposition = callerRequiresTool
+    ? agentToolPolicy.filter((filter) => filter.action !== "require")
+    : agentToolPolicy;
+
+  // Apply global defaults before agent/runtime policy so runtime hard-deny and required-tool
+  // rules in the resolved agent policy remain authoritative.
+  const composedPolicy = [
+    ...globalToolsPolicy,
+    ...agentToolPolicyForComposition,
+    ...(callerToolPolicy ?? []),
+  ];
+
+  return composedPolicy.length > 0 ? composedPolicy : undefined;
+}
+
 /** Options for agent resolution. */
 export interface ResolveAgentOptions {
   workspaceId: string;
@@ -258,19 +288,12 @@ export async function resolveAgentForStream(
     advisorEnabled,
   });
 
-  // Caller require policies (e.g. task completion enforcement) must take precedence.
-  // Drop agent-level require filters in that case to avoid multiple-required-tool conflicts.
-  const callerRequiresTool =
-    callerToolPolicy?.some((filter) => filter.action === "require") === true;
-  const agentToolPolicyForComposition = callerRequiresTool
-    ? agentToolPolicy.filter((filter) => filter.action !== "require")
-    : agentToolPolicy;
   const globalToolsPolicy = buildGlobalToolsPolicy(cfg);
-
-  const effectiveToolPolicy: ToolPolicy | undefined =
-    callerToolPolicy || agentToolPolicyForComposition.length > 0 || globalToolsPolicy.length > 0
-      ? [...agentToolPolicyForComposition, ...globalToolsPolicy, ...(callerToolPolicy ?? [])]
-      : undefined;
+  const effectiveToolPolicy = composeEffectiveToolPolicy({
+    agentToolPolicy,
+    callerToolPolicy,
+    globalToolsPolicy,
+  });
 
   return Ok({
     effectiveAgentId,
