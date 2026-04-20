@@ -11,8 +11,10 @@ import { novncCompatPlugin } from "./src/vite/novncCompatPlugin";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
 
-// Vite server configuration (for dev-server remote access)
-const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by default
+// Repo dev defaults to LAN-visible binding so phones/other machines can hit the
+// local Vite UI without extra flags. Production/server mode still uses explicit
+// host/port controls (`mux server --host/--port` or the desktop settings UI).
+const devServerHost = process.env.MUX_VITE_HOST ?? "0.0.0.0";
 const devServerPort = Number(process.env.MUX_VITE_PORT ?? "3010");
 
 const devServerAllowedHosts = (() => {
@@ -30,22 +32,9 @@ const devServerAllowedHosts = (() => {
     return parsed.length ? parsed : ["localhost", "127.0.0.1"];
   }
 
-  // Default to localhost-only. For remote access, set MUX_VITE_ALLOWED_HOSTS (or
-  // the Makefile's VITE_ALLOWED_HOSTS).
-  const defaults = ["localhost", "127.0.0.1"];
-
-  // If the dev server is bound to a specific host (not a wildcard), include it so
-  // access works without extra configuration.
-  if (
-    devServerHost !== "127.0.0.1" &&
-    devServerHost !== "localhost" &&
-    devServerHost !== "0.0.0.0" &&
-    devServerHost !== "::"
-  ) {
-    defaults.push(devServerHost);
-  }
-
-  return defaults;
+  // Match the LAN-visible repo dev default unless callers explicitly narrow the
+  // allowlist via MUX_VITE_ALLOWED_HOSTS / VITE_ALLOWED_HOSTS.
+  return true;
 })();
 
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
@@ -168,7 +157,7 @@ export default defineConfig(({ mode }) => {
       plugins: () => [topLevelAwait()],
     },
     server: {
-      host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
+      host: devServerHost, // Configurable via MUX_VITE_HOST (repo dev defaults to 0.0.0.0)
       port: devServerPort,
       strictPort: true,
       allowedHosts: devServerAllowedHosts,

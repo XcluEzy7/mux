@@ -115,6 +115,11 @@ This project uses the [Makefile](./Makefile) as the primary command runner. Use 
 
 If you prefer Bun, `bun run <target>` proxies to the same Make targets.
 
+Repo dev binds the Vite/dev-server stack on LAN-visible addresses by default so
+other devices on your network can hit the local UI during development. Override
+`VITE_HOST=127.0.0.1` (and `BACKEND_HOST=127.0.0.1` for `make dev-server`) if
+you want a local-only session.
+
 See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 
 ## License
