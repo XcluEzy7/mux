@@ -425,7 +425,14 @@ export function PRLinkBadge({ prLink, feed, onPushToFix }: PRLinkBadgeProps) {
                 <div className="text-muted text-xs">
                   Push unresolved findings to a remediation fork workspace.
                 </div>
-                <Button type="button" size="sm" onClick={handlePushToFix} disabled={isPushingToFix}>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    void handlePushToFix();
+                  }}
+                  disabled={isPushingToFix}
+                >
                   {isPushingToFix ? "Forking…" : "Push to agent to fix"}
                 </Button>
               </div>
