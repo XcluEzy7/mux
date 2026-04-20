@@ -311,6 +311,54 @@ describe("openInEditor", () => {
     expect(openSettingsCalls).toEqual(["general"]);
   });
 
+  test("falls back to generic ssh host in development when tailscale username is unavailable", async () => {
+    const calls: OpenCall[] = [];
+    const openSettingsCalls: string[] = [];
+
+    const api = {
+      server: {
+        getTailscaleSsh: () =>
+          Promise.resolve({
+            enabled: true,
+            sshHost: "devbox.tailnet.ts.net",
+            proxyCommand: true,
+          }),
+        detectTailscale: () => Promise.reject(new Error("tailscale unavailable")),
+        getSshHost: () => Promise.resolve("dev-fallback-host"),
+      },
+    } as unknown as APIClient;
+
+    const result = await withNodeEnv("development", () =>
+      withWindow(
+        createMockWindow(calls, {
+          hostname: "mux.remote.example",
+          editorConfig: { editor: "zed" },
+          experiments: {
+            [getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH)]: true,
+          },
+        }),
+        () =>
+          openInEditor({
+            api,
+            openSettings: (section) => {
+              if (section) {
+                openSettingsCalls.push(section);
+              }
+            },
+            workspaceId,
+            targetPath: filePath,
+            isFile: true,
+          })
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      ["zed://ssh/dev-fallback-host/home/user/project/plan.md:1:1", "_blank"],
+    ]);
+    expect(openSettingsCalls).toEqual([]);
+  });
+
   test("uses the remote Tailscale username for zed browser deep links", async () => {
     const calls: OpenCall[] = [];
 

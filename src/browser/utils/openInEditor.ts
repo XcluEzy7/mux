@@ -284,17 +284,22 @@ export async function openInEditor(args: {
             // In production, require explicit settings to avoid silently using the
             // client OS account when the editor resolves SSH defaults.
             if (!tailscaleUsername) {
-              args.openSettings?.("general");
-              return {
-                success: false,
-                error:
-                  "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
-              };
+              if (!isDevelopment) {
+                args.openSettings?.("general");
+                return {
+                  success: false,
+                  error:
+                    "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+                };
+              }
+            } else {
+              // Pass the remote account through the deep link so editors like Zed
+              // do not guess the client-side username for server connections.
+              sshHost = buildSshHostWithOptionalUsername(
+                tailscaleConfig.sshHost,
+                tailscaleUsername
+              );
             }
-
-            // Pass the remote account through the deep link so editors like Zed
-            // do not guess the client-side username for server connections.
-            sshHost = buildSshHostWithOptionalUsername(tailscaleConfig.sshHost, tailscaleUsername);
           }
         } catch {
           // Fall through to the standard SSH host resolution below.
