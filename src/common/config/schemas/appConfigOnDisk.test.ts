@@ -62,6 +62,29 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("defaults missing custom tool args to an empty array", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      tools: {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "weather_lookup",
+            label: "Weather Lookup",
+            command: "python",
+            enabled: true,
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.tools?.custom[0]?.args).toEqual([]);
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 

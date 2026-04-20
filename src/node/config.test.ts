@@ -962,7 +962,7 @@ describe("Config", () => {
 
       expect(loaded.tools).toEqual({
         defaults: { mode: "allow_all_except", toolNames: ["bash"] },
-        custom: [{ id: "tool-1", label: "Tool 1", command: "npx", enabled: true }],
+        custom: [{ id: "tool-1", label: "Tool 1", command: "npx", args: [], enabled: true }],
       });
     });
   });

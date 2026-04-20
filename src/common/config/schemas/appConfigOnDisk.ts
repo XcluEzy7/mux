@@ -48,7 +48,7 @@ export const CustomToolSchema = z.object({
   id: z.string(),
   label: z.string(),
   command: z.string(),
-  args: z.array(z.string()).optional(),
+  args: z.array(z.string()).default([]),
   instructions: z.string().optional(),
   provenance: CustomToolProvenanceSchema,
   enabled: z.boolean(),
