@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
+import { applyToolPolicyToNames } from "@/common/utils/tools/toolPolicy";
 import type { ProjectsConfig } from "@/common/types/project";
-import { buildGlobalToolsPolicy } from "./agentResolution";
+import { buildGlobalToolsPolicy, composeEffectiveToolPolicy } from "./agentResolution";
 
 function createBaseConfig(): ProjectsConfig {
   return {
@@ -55,5 +56,27 @@ describe("buildGlobalToolsPolicy", () => {
       { action: "enable", regex_match: "^file_read$" },
       { action: "enable", regex_match: "^mcp\\.server\\.tool\\+name$" },
     ]);
+  });
+});
+
+describe("composeEffectiveToolPolicy", () => {
+  it("keeps runtime hard-deny precedence over global allow defaults", () => {
+    const policy = composeEffectiveToolPolicy({
+      globalToolsPolicy: [{ action: "enable", regex_match: "^bash$" }],
+      agentToolPolicy: [{ action: "disable", regex_match: "bash" }],
+      callerToolPolicy: undefined,
+    });
+
+    expect(applyToolPolicyToNames(["bash"], policy)).toEqual([]);
+  });
+
+  it("drops agent require rules when caller provides its own required tool", () => {
+    const policy = composeEffectiveToolPolicy({
+      globalToolsPolicy: [],
+      agentToolPolicy: [{ action: "require", regex_match: "agent_report" }],
+      callerToolPolicy: [{ action: "require", regex_match: "task" }],
+    });
+
+    expect(policy).toEqual([{ action: "require", regex_match: "task" }]);
   });
 });

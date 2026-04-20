@@ -240,9 +240,14 @@ function buildCustomToolValidation(
   };
 }
 
-function FieldLabel(props: { children: React.ReactNode; required?: boolean }) {
+function FieldLabel(props: {
+  children: React.ReactNode;
+  required?: boolean;
+  htmlFor?: string;
+  id?: string;
+}) {
   return (
-    <label className="text-muted mb-1 block text-xs">
+    <label htmlFor={props.htmlFor} id={props.id} className="text-muted mb-1 block text-xs">
       {props.children}
       {props.required ? <span className="text-foreground ml-0.5">*</span> : null}
     </label>
@@ -460,13 +465,18 @@ export function ToolsSettingsSection() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
-          <FieldLabel required>Default mode</FieldLabel>
+          <FieldLabel id="tools-default-mode-label" required>
+            Default mode
+          </FieldLabel>
           <div className="space-y-2">
             <Select
               value={toolsConfig.defaults.mode}
               onValueChange={(value) => updateMode(value as ToolsDefaultMode)}
             >
-              <SelectTrigger className="w-full max-w-[320px]">
+              <SelectTrigger
+                className="w-full max-w-[320px]"
+                aria-labelledby="tools-default-mode-label"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -479,8 +489,11 @@ export function ToolsSettingsSection() {
         </div>
 
         <div>
-          <FieldLabel>Tool name list (comma-separated)</FieldLabel>
+          <FieldLabel htmlFor="tools-default-tool-names">
+            Tool name list (comma-separated)
+          </FieldLabel>
           <Input
+            id="tools-default-tool-names"
             value={toolNamesInput}
             onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
               setToolNamesInput(event.target.value)
@@ -557,6 +570,13 @@ export function ToolsSettingsSection() {
               const blockingIssueCount =
                 validation.blockingErrors.length + (argsValidation.error ? 1 : 0);
               const warningCount = validation.warnings.length;
+              const toolIdInputId = `custom-tool-id-${index}`;
+              const toolLabelInputId = `custom-tool-label-${index}`;
+              const toolCommandInputId = `custom-tool-command-${index}`;
+              const toolArgsInputId = `custom-tool-args-${index}`;
+              const toolInstructionsInputId = `custom-tool-instructions-${index}`;
+              const toolProvenancePackageInputId = `custom-tool-provenance-package-${index}`;
+              const toolProvenanceLinksInputId = `custom-tool-provenance-links-${index}`;
 
               return (
                 <div
@@ -620,8 +640,11 @@ export function ToolsSettingsSection() {
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
-                      <FieldLabel required>Tool ID</FieldLabel>
+                      <FieldLabel htmlFor={toolIdInputId} required>
+                        Tool ID
+                      </FieldLabel>
                       <Input
+                        id={toolIdInputId}
                         value={tool.id}
                         onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                           updateCustomTool(index, (prev) => ({ ...prev, id: event.target.value }))
@@ -637,8 +660,11 @@ export function ToolsSettingsSection() {
                     </div>
 
                     <div>
-                      <FieldLabel required>Label</FieldLabel>
+                      <FieldLabel htmlFor={toolLabelInputId} required>
+                        Label
+                      </FieldLabel>
                       <Input
+                        id={toolLabelInputId}
                         value={tool.label}
                         onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                           updateCustomTool(index, (prev) => ({
@@ -655,8 +681,11 @@ export function ToolsSettingsSection() {
                   </div>
 
                   <div>
-                    <FieldLabel required>Command</FieldLabel>
+                    <FieldLabel htmlFor={toolCommandInputId} required>
+                      Command
+                    </FieldLabel>
                     <Input
+                      id={toolCommandInputId}
                       value={tool.command}
                       onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                         updateCustomTool(index, (prev) => ({
@@ -674,8 +703,9 @@ export function ToolsSettingsSection() {
                   </div>
 
                   <div>
-                    <FieldLabel>Args (quote-aware)</FieldLabel>
+                    <FieldLabel htmlFor={toolArgsInputId}>Args (quote-aware)</FieldLabel>
                     <Input
+                      id={toolArgsInputId}
                       value={customToolArgsInput[index] ?? ""}
                       onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
                         setCustomToolArgsInput((prev) => {
@@ -723,8 +753,9 @@ export function ToolsSettingsSection() {
                   </div>
 
                   <div>
-                    <FieldLabel>Instructions</FieldLabel>
+                    <FieldLabel htmlFor={toolInstructionsInputId}>Instructions</FieldLabel>
                     <textarea
+                      id={toolInstructionsInputId}
                       value={tool.instructions ?? ""}
                       onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>
                         updateCustomTool(index, (prev) => ({
@@ -740,8 +771,11 @@ export function ToolsSettingsSection() {
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
-                      <FieldLabel>Provenance package</FieldLabel>
+                      <FieldLabel htmlFor={toolProvenancePackageInputId}>
+                        Provenance package
+                      </FieldLabel>
                       <Input
+                        id={toolProvenancePackageInputId}
                         value={tool.provenance?.package ?? ""}
                         onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                           updateCustomTool(index, (prev) => ({
@@ -757,8 +791,11 @@ export function ToolsSettingsSection() {
                     </div>
 
                     <div>
-                      <FieldLabel>Provenance links (comma-separated)</FieldLabel>
+                      <FieldLabel htmlFor={toolProvenanceLinksInputId}>
+                        Provenance links (comma-separated)
+                      </FieldLabel>
                       <Input
+                        id={toolProvenanceLinksInputId}
                         value={linksInputValue}
                         onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                           updateCustomTool(index, (prev) => ({
