@@ -2671,6 +2671,218 @@ describe("WorkspaceService getProjectGitStatuses", () => {
   });
 });
 
+describe("WorkspaceService getPullRequestFeed", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  function bashOk(output: string): Result<BashToolResult> {
+    return {
+      success: true,
+      data: {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms: 0,
+      },
+    };
+  }
+
+  function createServiceHarness(
+    executeBashImpl: (
+      workspaceId: string,
+      script: string,
+      options?: {
+        timeout_secs?: number | null;
+      }
+    ) => Promise<Result<BashToolResult>>
+  ): {
+    workspaceService: WorkspaceService;
+    executeBashMock: ReturnType<typeof mock>;
+  } {
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const executeBashMock = mock(executeBashImpl);
+
+    interface WorkspaceServiceTestAccess {
+      executeBash: typeof executeBashMock;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.executeBash = executeBashMock;
+
+    return { workspaceService, executeBashMock };
+  }
+
+  test("returns null PR feed when branch has no PR", async () => {
+    const { workspaceService, executeBashMock } = createServiceHarness((_workspaceId, script) => {
+      expect(script).toContain("gh pr view --json");
+      return Promise.resolve(bashOk('{"no_pr":true}'));
+    });
+
+    const result = await workspaceService.getPullRequestFeed("ws-no-pr");
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.pr).toBeNull();
+    expect(result.data.reviewDecision).toBeNull();
+    expect(result.data.reviewers).toEqual([]);
+    expect(result.data.threads).toEqual([]);
+    expect(result.data.checksSummary).toEqual({ hasPendingChecks: false, hasFailedChecks: false });
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns typed PR feed with checks, reviewers, threads, and merge queue", async () => {
+    const { workspaceService, executeBashMock } = createServiceHarness((_workspaceId, script) => {
+      if (script.includes("gh pr view --json")) {
+        return Promise.resolve(
+          bashOk(
+            JSON.stringify({
+              url: "https://github.com/example/repo/pull/42",
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              title: "Improve watcher",
+              isDraft: false,
+              headRefName: "feature/pr-feed",
+              baseRefName: "main",
+              statusCheckRollup: [
+                { status: "IN_PROGRESS", conclusion: null },
+                { status: "COMPLETED", conclusion: "SUCCESS" },
+              ],
+              reviewDecision: "REVIEW_REQUIRED",
+              reviews: [
+                { author: { login: "alice", is_bot: false } },
+                { author: { login: "coderabbitai", is_bot: true } },
+              ],
+            })
+          )
+        );
+      }
+
+      if (script.includes("gh api graphql")) {
+        return Promise.resolve(
+          bashOk(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    mergeQueueEntry: { state: "AWAITING_CHECKS", position: 2 },
+                    reviewThreads: {
+                      nodes: [
+                        {
+                          id: "thread-1",
+                          isResolved: false,
+                          isOutdated: false,
+                          comments: {
+                            nodes: [
+                              {
+                                id: "comment-1",
+                                url: "https://github.com/example/repo/pull/42#discussion_r1",
+                                body: "Please tighten this type",
+                                path: "src/node/services/workspaceService.ts",
+                                line: 12,
+                                createdAt: "2026-04-20T00:00:00Z",
+                                replyTo: null,
+                                author: { login: "greptilebot", __typename: "Bot" },
+                              },
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            })
+          )
+        );
+      }
+
+      throw new Error(`Unexpected executeBash script: ${script}`);
+    });
+
+    const result = await workspaceService.getPullRequestFeed("ws-pr");
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.pr?.url).toBe("https://github.com/example/repo/pull/42");
+    expect(result.data.pr?.status?.hasPendingChecks).toBe(true);
+    expect(result.data.pr?.status?.hasFailedChecks).toBe(false);
+    expect(result.data.pr?.status?.mergeQueueEntry).toEqual({
+      state: "AWAITING_CHECKS",
+      position: 2,
+    });
+    expect(result.data.reviewDecision).toBe("REVIEW_REQUIRED");
+    expect(result.data.checksSummary).toEqual({ hasPendingChecks: true, hasFailedChecks: false });
+    expect(result.data.threads).toHaveLength(1);
+    expect(result.data.reviewers).toEqual([
+      { login: "alice", isBot: false, category: "human" },
+      { login: "coderabbitai", isBot: true, category: "coderabbit" },
+      { login: "greptilebot", isBot: true, category: "greptile" },
+    ]);
+    expect(executeBashMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("returns an error when gh returns an invalid PR URL", async () => {
+    const { workspaceService } = createServiceHarness(() => {
+      return Promise.resolve(
+        bashOk(
+          JSON.stringify({
+            url: "not-a-url",
+            state: "OPEN",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+          })
+        )
+      );
+    });
+
+    const result = await workspaceService.getPullRequestFeed("ws-invalid-url");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Invalid PR URL");
+    }
+  });
+});
+
 describe("WorkspaceService post-compaction metadata refresh", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;

@@ -21,11 +21,20 @@ export { ProjectConfigSchema, SectionConfigSchema, WorkspaceConfigSchema } from 
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
   FrontendWorkspaceMetadataSchema,
+  GitHubPRLinkSchema,
+  GitHubPRLinkWithStatusSchema,
+  GitHubPRStatusSchema,
   GitStatusSchema,
+  MergeQueueEntrySchema,
   ProjectRefSchema,
+  PullRequestReviewCommentSchema,
+  PullRequestReviewThreadSchema,
+  PullRequestReviewerCategorySchema,
+  PullRequestReviewerIdentitySchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
+  WorkspacePullRequestFeedSchema,
 } from "./schemas/workspace";
 
 // Workspace stats schemas

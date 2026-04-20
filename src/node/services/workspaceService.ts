@@ -84,12 +84,14 @@ import type {
 
 import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
+import type { MergeQueueEntry } from "@/common/types/links";
 import type {
   FrontendWorkspaceMetadata,
   GitStatus,
   ProjectRef,
   WorkspaceActivitySnapshot,
   WorkspaceMetadata,
+  WorkspacePullRequestFeed,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
@@ -189,6 +191,15 @@ import {
   updateSubagentTranscriptArtifactsFile,
   upsertSubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import {
+  buildGitHubPRLink,
+  buildGitHubPRStatus,
+  collectReviewers,
+  GH_PR_VIEW_JSON_FIELDS,
+  MERGE_QUEUE_AND_THREADS_QUERY,
+  parseMergeQueueEntryFromGraphql,
+  parseReviewThreadsFromGraphql,
+} from "@/node/services/pullRequestFeed";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /** Maximum number of retry attempts when workspace name collides */
@@ -4603,6 +4614,134 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return results;
+  }
+
+  async getPullRequestFeed(workspaceId: string): Promise<Result<WorkspacePullRequestFeed>> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return Err("workspaceId is required");
+    }
+
+    const fetchedAt = Date.now();
+    const baseResponse: Omit<
+      WorkspacePullRequestFeed,
+      "pr" | "reviewDecision" | "reviewers" | "threads"
+    > = {
+      workspaceId: normalizedWorkspaceId,
+      checksSummary: {
+        hasPendingChecks: false,
+        hasFailedChecks: false,
+      },
+      fetchedAt,
+    };
+
+    try {
+      const viewResult = await this.executeBash(
+        normalizedWorkspaceId,
+        `gh pr view --json ${GH_PR_VIEW_JSON_FIELDS} 2>/dev/null || echo '{"no_pr":true}'`,
+        {
+          timeout_secs: 15,
+          // gh requires the runtime environment — devcontainer auth/CLI
+          // may only exist inside the container.
+        }
+      );
+
+      if (!viewResult.success) {
+        return Err(viewResult.error);
+      }
+
+      if (!viewResult.data.success) {
+        return Err(viewResult.data.error);
+      }
+
+      const output = viewResult.data.output;
+      if (!output || output.trim().length === 0) {
+        return Err("gh pr view returned empty output");
+      }
+
+      const parsed = JSON.parse(output) as unknown;
+      if (typeof parsed !== "object" || parsed === null) {
+        return Err("Unexpected gh output: not a JSON object");
+      }
+
+      const viewRecord = parsed as Record<string, unknown>;
+      if ("no_pr" in viewRecord) {
+        return Ok({
+          ...baseResponse,
+          pr: null,
+          reviewDecision: null,
+          reviewers: [],
+          threads: [],
+        });
+      }
+
+      const prUrl = typeof viewRecord.url === "string" ? viewRecord.url : null;
+      if (!prUrl) {
+        return Err("gh pr view response is missing a valid PR URL");
+      }
+
+      const prLink = buildGitHubPRLink(prUrl, fetchedAt);
+      if (!prLink) {
+        return Err("Invalid PR URL from gh CLI");
+      }
+
+      const status = buildGitHubPRStatus(viewRecord, fetchedAt);
+      const reviewDecision =
+        typeof viewRecord.reviewDecision === "string" ? viewRecord.reviewDecision : null;
+
+      let mergeQueueEntry: MergeQueueEntry | null = null;
+      let threads: WorkspacePullRequestFeed["threads"] = [];
+
+      const graphqlResult = await this.executeBash(
+        normalizedWorkspaceId,
+        [
+          "gh api graphql",
+          `-f query='${MERGE_QUEUE_AND_THREADS_QUERY}'`,
+          `-f owner='${prLink.owner}'`,
+          `-f repo='${prLink.repo}'`,
+          `-F number=${prLink.number}`,
+          "2>/dev/null",
+        ].join(" "),
+        {
+          timeout_secs: 10,
+          // gh requires the runtime environment — devcontainer auth/CLI
+          // may only exist inside the container.
+        }
+      );
+
+      if (graphqlResult.success && graphqlResult.data.success && graphqlResult.data.output) {
+        try {
+          const graphQlPayload = JSON.parse(graphqlResult.data.output) as unknown;
+          mergeQueueEntry = parseMergeQueueEntryFromGraphql(graphQlPayload);
+          threads = parseReviewThreadsFromGraphql(graphQlPayload);
+        } catch {
+          // Best-effort only: review threads and merge queue metadata are non-fatal enrichments.
+        }
+      }
+
+      if (mergeQueueEntry != null) {
+        status.mergeQueueEntry = mergeQueueEntry;
+      }
+
+      const reviewers = collectReviewers(viewRecord.reviews, threads);
+
+      return Ok({
+        ...baseResponse,
+        pr: {
+          ...prLink,
+          status,
+        },
+        reviewDecision,
+        checksSummary: {
+          hasPendingChecks: status.hasPendingChecks ?? false,
+          hasFailedChecks: status.hasFailedChecks ?? false,
+        },
+        reviewers,
+        threads,
+      });
+    } catch (error) {
+      return Err(getErrorMessage(error));
+    }
   }
 
   /**

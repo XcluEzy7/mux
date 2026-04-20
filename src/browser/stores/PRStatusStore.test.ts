@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeStatus } from "./RuntimeStatusStore";
-import { PRStatusStore, parseMergeQueueEntry } from "./PRStatusStore";
+import { PRStatusStore } from "./PRStatusStore";
 
 const DEVCONTAINER_RUNTIME = {
   type: "devcontainer" as const,
@@ -73,9 +73,9 @@ async function runPassiveRefreshScenario(
   runtimeStatus: RuntimeStatus | null,
   shouldRun: boolean
 ): Promise<number> {
-  const executeBash = mock(() => {
-    // Return a top-level failure so detectWorkspacePR exits before JSON parsing.
-    // These tests only care whether passive refresh attempted the gh command.
+  const getPullRequestFeed = mock(() => {
+    // Return a top-level failure so detectWorkspacePR exits quickly.
+    // These tests only care whether passive refresh attempted the endpoint call.
     return Promise.resolve({ success: false as const, error: "gh unavailable" });
   });
 
@@ -86,7 +86,7 @@ async function runPassiveRefreshScenario(
   try {
     store.setClient({
       workspace: {
-        executeBash,
+        getPullRequestFeed,
       },
     } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -95,12 +95,12 @@ async function runPassiveRefreshScenario(
     store.subscribeWorkspace(metadata.id, () => undefined);
 
     if (shouldRun) {
-      await waitUntil(() => executeBash.mock.calls.length > 0);
+      await waitUntil(() => getPullRequestFeed.mock.calls.length > 0);
     } else {
       await sleep(100);
     }
 
-    return executeBash.mock.calls.length;
+    return getPullRequestFeed.mock.calls.length;
   } finally {
     store.dispose();
   }
@@ -140,7 +140,7 @@ describe("passive refresh runtime gating", () => {
   it("retries PR refresh when devcontainer runtime transitions from null to running", async () => {
     const metadata = createWorkspaceMetadata("dc-retry", DEVCONTAINER_RUNTIME);
     const runtimeStatusStore = createRuntimeStatusStoreMock(null);
-    const executeBash = mock(() => {
+    const getPullRequestFeed = mock(() => {
       return Promise.resolve({ success: false as const, error: "gh unavailable" });
     });
     const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
@@ -148,7 +148,7 @@ describe("passive refresh runtime gating", () => {
     try {
       store.setClient({
         workspace: {
-          executeBash,
+          getPullRequestFeed,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -157,13 +157,13 @@ describe("passive refresh runtime gating", () => {
       store.subscribeWorkspace(metadata.id, () => undefined);
 
       await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
-      expect(executeBash.mock.calls.length).toBe(0);
+      expect(getPullRequestFeed.mock.calls.length).toBe(0);
 
       runtimeStatusStore.setStatus("running");
       runtimeStatusStore.emit(metadata.id);
 
-      await waitUntil(() => executeBash.mock.calls.length > 0);
-      expect(executeBash.mock.calls.length).toBe(1);
+      await waitUntil(() => getPullRequestFeed.mock.calls.length > 0);
+      expect(getPullRequestFeed.mock.calls.length).toBe(1);
     } finally {
       store.dispose();
     }
@@ -172,7 +172,7 @@ describe("passive refresh runtime gating", () => {
   it("does not retry PR refresh when devcontainer runtime stays stopped", async () => {
     const metadata = createWorkspaceMetadata("dc-stays-stopped", DEVCONTAINER_RUNTIME);
     const runtimeStatusStore = createRuntimeStatusStoreMock(null);
-    const executeBash = mock(() => {
+    const getPullRequestFeed = mock(() => {
       return Promise.resolve({ success: false as const, error: "gh unavailable" });
     });
     const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
@@ -180,7 +180,7 @@ describe("passive refresh runtime gating", () => {
     try {
       store.setClient({
         workspace: {
-          executeBash,
+          getPullRequestFeed,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -189,13 +189,13 @@ describe("passive refresh runtime gating", () => {
       store.subscribeWorkspace(metadata.id, () => undefined);
 
       await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
-      expect(executeBash.mock.calls.length).toBe(0);
+      expect(getPullRequestFeed.mock.calls.length).toBe(0);
 
       runtimeStatusStore.setStatus("stopped");
       runtimeStatusStore.emit(metadata.id);
       await sleep(100);
 
-      expect(executeBash.mock.calls.length).toBe(0);
+      expect(getPullRequestFeed.mock.calls.length).toBe(0);
     } finally {
       store.dispose();
     }
@@ -209,54 +209,5 @@ describe("passive refresh runtime gating", () => {
     );
 
     expect(callCount).toBe(1);
-  });
-});
-
-describe("parseMergeQueueEntry", () => {
-  it("returns null for null and undefined", () => {
-    expect(parseMergeQueueEntry(null)).toBeNull();
-    expect(parseMergeQueueEntry(undefined)).toBeNull();
-  });
-
-  it("returns null for non-object values", () => {
-    expect(parseMergeQueueEntry("queue")).toBeNull();
-    expect(parseMergeQueueEntry(42)).toBeNull();
-    expect(parseMergeQueueEntry(true)).toBeNull();
-  });
-
-  it("parses valid merge queue entry", () => {
-    expect(parseMergeQueueEntry({ state: "QUEUED", position: 0 })).toEqual({
-      state: "QUEUED",
-      position: 0,
-    });
-  });
-
-  it("allows null position", () => {
-    expect(parseMergeQueueEntry({ state: "AWAITING_CHECKS", position: null })).toEqual({
-      state: "AWAITING_CHECKS",
-      position: null,
-    });
-  });
-
-  it("defaults state to QUEUED when absent", () => {
-    expect(parseMergeQueueEntry({ position: 2 })).toEqual({
-      state: "QUEUED",
-      position: 2,
-    });
-  });
-
-  it("normalizes invalid position values to null", () => {
-    expect(parseMergeQueueEntry({ state: "QUEUED", position: -1 })).toEqual({
-      state: "QUEUED",
-      position: null,
-    });
-    expect(parseMergeQueueEntry({ state: "QUEUED", position: 1.5 })).toEqual({
-      state: "QUEUED",
-      position: null,
-    });
-    expect(parseMergeQueueEntry({ state: "QUEUED", position: "0" })).toEqual({
-      state: "QUEUED",
-      position: null,
-    });
   });
 });
