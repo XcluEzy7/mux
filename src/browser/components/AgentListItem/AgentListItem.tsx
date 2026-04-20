@@ -9,6 +9,7 @@ import {
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
+import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
@@ -50,6 +51,7 @@ import {
   EyeOff,
   ChevronDown,
   HeartPulse,
+  GitPullRequest,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -62,6 +64,7 @@ import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContex
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { getStatusColorClass, getTooltipContent } from "../PRLinkBadge/PRLinkBadge";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -272,6 +275,42 @@ function QuickArchiveButton(props: {
         <TooltipContent side="right">Archive chat</TooltipContent>
       </Tooltip>
     </div>
+  );
+}
+
+function WorkspacePRIndicator(props: { workspaceId: string }) {
+  const prLink = useWorkspacePR(props.workspaceId);
+
+  if (!prLink) {
+    return null;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <a
+          href={prLink.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "inline-flex items-center gap-0.5 text-[11px] leading-none",
+            getStatusColorClass(prLink)
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+          onKeyDown={stopKeyboardPropagation}
+          aria-label={`Open linked pull request #${prLink.number}`}
+          data-testid={`workspace-pr-indicator-${props.workspaceId}`}
+        >
+          <GitPullRequest className="h-3 w-3" />
+          <span>#{prLink.number}</span>
+        </a>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="whitespace-pre-line">
+        {getTooltipContent(prLink)}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1057,20 +1096,23 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     <span>Archiving...</span>
                   </div>
                 ) : (
-                  terminalActiveCount > 0 && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="text-muted flex items-center gap-0.5">
-                          <WorkspaceTerminalIcon className="h-3 w-3" />
-                          <span className="text-[11px]">{terminalActiveCount}</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
-                        commands
-                      </TooltipContent>
-                    </Tooltip>
-                  )
+                  <>
+                    <WorkspacePRIndicator workspaceId={workspaceId} />
+                    {terminalActiveCount > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="text-muted flex items-center gap-0.5">
+                            <WorkspaceTerminalIcon className="h-3 w-3" />
+                            <span className="text-[11px]">{terminalActiveCount}</span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""}{" "}
+                          running commands
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </>
                 )}
               </div>
             )}

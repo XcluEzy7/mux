@@ -24,6 +24,66 @@ function StoryLayout(props: { children: ReactNode }) {
   );
 }
 
+function makeFeed(number: number) {
+  const prLink = makePRLink(number, {
+    mergeStateStatus: "BLOCKED",
+    title: "feat: add pull request remediation flow",
+    hasPendingChecks: true,
+  });
+
+  return {
+    workspaceId: "ws-story",
+    pr: prLink,
+    reviewDecision: "CHANGES_REQUESTED",
+    checksSummary: {
+      hasPendingChecks: true,
+      hasFailedChecks: false,
+    },
+    reviewers: [
+      { login: "codex", isBot: true, category: "codex" as const },
+      { login: "coderabbitai", isBot: true, category: "coderabbit" as const },
+      { login: "alice", isBot: false, category: "human" as const },
+    ],
+    threads: [
+      {
+        id: "thread-1",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "comment-1",
+            url: "https://github.com/coder/mux/pull/1#discussion_r1",
+            body: "Please tighten this null check before reading the branch name.",
+            path: "src/browser/components/WorkspaceLinks/WorkspaceLinks.tsx",
+            line: 20,
+            createdAt: new Date().toISOString(),
+            replyToId: null,
+            author: { login: "codex", isBot: true, category: "codex" as const },
+          },
+        ],
+      },
+      {
+        id: "thread-2",
+        isResolved: true,
+        isOutdated: false,
+        comments: [
+          {
+            id: "comment-2",
+            url: "https://github.com/coder/mux/pull/1#discussion_r2",
+            body: "Resolved in latest commit.",
+            path: "src/browser/components/PRLinkBadge/PRLinkBadge.tsx",
+            line: 120,
+            createdAt: new Date().toISOString(),
+            replyToId: null,
+            author: { login: "alice", isBot: false, category: "human" as const },
+          },
+        ],
+      },
+    ],
+    fetchedAt: Date.now(),
+  };
+}
+
 function makePRLink(
   number: number,
   statusOverrides: Partial<GitHubPRStatus> = {},
@@ -182,4 +242,21 @@ export const LinksDropdownContext: Story = {
       </div>
     );
   },
+};
+
+/** PR badge details panel showing reviewer attribution and remediation action */
+export const DetailsWithReviewerFeed: Story = {
+  render: () => (
+    <StoryLayout>
+      <PRLinkBadge
+        prLink={makePRLink(1701, {
+          mergeStateStatus: "BLOCKED",
+          hasPendingChecks: true,
+          title: "feat: watcher-driven PR remediation",
+        })}
+        feed={makeFeed(1701)}
+        onPushToFix={async () => undefined}
+      />
+    </StoryLayout>
+  ),
 };
