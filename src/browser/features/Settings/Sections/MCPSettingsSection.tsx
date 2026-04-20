@@ -40,8 +40,7 @@ import {
 import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
-
-const CUSTOM_TOOL_SERVER_PREFIX = "custom-tool:";
+import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -1123,7 +1122,7 @@ export const MCPSettingsSection: React.FC = () => {
       : { errors: [], warnings: [] };
 
   const visibleServers: Record<string, MCPServerInfo> = Object.fromEntries(
-    Object.entries(servers).filter(([name]) => !name.startsWith(CUSTOM_TOOL_SERVER_PREFIX))
+    Object.entries(servers).filter(([name]) => !name.startsWith(CUSTOM_TOOL_MCP_SERVER_PREFIX))
   );
 
   return (

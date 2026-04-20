@@ -15,11 +15,10 @@ import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { shellQuote } from "@/common/utils/shell";
 import { getErrorMessage } from "@/common/utils/errors";
-
-const CUSTOM_TOOL_SERVER_PREFIX = "custom-tool:";
+import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
 
 export function getCustomToolMcpServerName(customToolId: string): string {
-  return `${CUSTOM_TOOL_SERVER_PREFIX}${customToolId}`;
+  return `${CUSTOM_TOOL_MCP_SERVER_PREFIX}${customToolId}`;
 }
 
 function buildQuotedCommand(command: string, args?: string[]): string {
@@ -196,6 +195,22 @@ export class MCPConfigService {
     return customServers;
   }
 
+  private mergeCustomToolServers(
+    baseServers: Record<string, MCPServerInfo>
+  ): Record<string, MCPServerInfo> {
+    const merged = { ...baseServers };
+    for (const [name, serverInfo] of Object.entries(this.getCustomToolServers())) {
+      if (merged[name] !== undefined) {
+        log.warn("Skipping synthetic custom tool MCP server due to name collision", { name });
+        continue;
+      }
+
+      merged[name] = serverInfo;
+    }
+
+    return merged;
+  }
+
   private async saveGlobalConfig(config: MCPConfig): Promise<void> {
     await this.ensureMuxRootDir();
 
@@ -255,32 +270,24 @@ export class MCPConfigService {
    */
   async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
-    const customToolServers = this.getCustomToolServers();
 
     if (!projectPath) {
-      return {
-        ...globalCfg.servers,
-        ...customToolServers,
-      };
+      return this.mergeCustomToolServers(globalCfg.servers);
     }
 
     if (!trusted) {
       log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return {
-        ...globalCfg.servers,
-        ...customToolServers,
-      };
+      return this.mergeCustomToolServers(globalCfg.servers);
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
 
-    // Repo overrides win by server name. Custom tools are global-only and use dedicated
-    // server names to avoid clobbering user-defined MCP entries.
-    return {
+    // Repo overrides win by server name. Synthetic custom-tool servers should never
+    // overwrite explicit user/server entries with the same name.
+    return this.mergeCustomToolServers({
       ...globalCfg.servers,
       ...repoCfg.servers,
-      ...customToolServers,
-    };
+    });
   }
 
   async addServer(

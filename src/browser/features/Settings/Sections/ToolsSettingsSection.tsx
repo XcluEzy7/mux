@@ -153,11 +153,10 @@ function getDuplicateValues(values: string[]): string[] {
   return [...duplicates];
 }
 
-function isValidUrl(url: string): boolean {
+export function isValidUrl(url: string): boolean {
   try {
-    // URL constructor supports both http(s) and other URI schemes that users may rely on.
-    new URL(url);
-    return true;
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;
   }

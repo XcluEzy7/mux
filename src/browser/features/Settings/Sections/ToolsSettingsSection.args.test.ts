@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseQuotedArgInput, stringifyArgsForInput } from "./ToolsSettingsSection";
+import { isValidUrl, parseQuotedArgInput, stringifyArgsForInput } from "./ToolsSettingsSection";
 
 describe("parseQuotedArgInput", () => {
   test("parses unquoted and quoted args in order", () => {
@@ -42,6 +42,15 @@ describe("parseQuotedArgInput", () => {
       args: ["python", "--path"],
       error: "Arguments cannot end with a trailing backslash.",
     });
+  });
+});
+
+describe("isValidUrl", () => {
+  test("allows only http and https URLs", () => {
+    expect(isValidUrl("https://example.com/docs")).toBe(true);
+    expect(isValidUrl("http://localhost:8080/health")).toBe(true);
+    expect(isValidUrl("javascript:alert(1)")).toBe(false);
+    expect(isValidUrl("data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==")).toBe(false);
   });
 });
 

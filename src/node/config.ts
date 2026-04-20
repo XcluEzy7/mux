@@ -212,7 +212,9 @@ function normalizeCustomToolProvenance(value: unknown): CustomTool["provenance"]
   }
 
   const record = value as { links?: unknown; package?: unknown };
-  const links = parseOptionalStringArray(record.links);
+  const links = parseOptionalStringArray(record.links)
+    ?.map((link) => link.trim())
+    .filter((link) => link.length > 0);
   const packageName = parseOptionalNonEmptyString(record.package);
 
   if (!links?.length && !packageName) {
@@ -247,6 +249,8 @@ function normalizeCustomTool(value: unknown): CustomTool | null {
     return null;
   }
 
+  // Preserve intentional empty argv entries (""), which are meaningful for the
+  // quote-aware args editor round-trip.
   const args = parseOptionalStringArray(record.args) ?? [];
   const instructions = parseOptionalNonEmptyString(record.instructions);
   const provenance = normalizeCustomToolProvenance(record.provenance);
@@ -550,7 +554,7 @@ export class Config {
   private readonly secretsFile: string;
   private configFileWatcher: fs.FSWatcher | null = null;
   private configFileWatchInitialized = false;
-  private suppressWatchEventsUntilMs = 0;
+  private pendingSelfWriteSignature: string | null = null;
   private readonly emitter = new EventEmitter();
 
   constructor(rootDir?: string) {
@@ -586,6 +590,19 @@ export class Config {
     this.configFileWatcher = null;
   }
 
+  private captureConfigFileSignature(): string | null {
+    try {
+      const stats = fs.statSync(this.configFile);
+      return `${stats.size}:${stats.mtimeMs}`;
+    } catch {
+      return null;
+    }
+  }
+
+  private markPendingSelfWrite(): void {
+    this.pendingSelfWriteSignature = this.captureConfigFileSignature();
+  }
+
   private ensureConfigFileWatch(): void {
     if (this.configFileWatcher) {
       return;
@@ -602,10 +619,16 @@ export class Config {
             return;
           }
 
-          if (Date.now() <= this.suppressWatchEventsUntilMs) {
+          const changedFileSignature = this.captureConfigFileSignature();
+          if (
+            this.pendingSelfWriteSignature !== null &&
+            changedFileSignature !== null &&
+            changedFileSignature === this.pendingSelfWriteSignature
+          ) {
             return;
           }
 
+          this.pendingSelfWriteSignature = null;
           this.notifyConfigChanged();
         });
       } catch (error) {
@@ -828,10 +851,10 @@ export class Config {
           }
 
           try {
-            this.suppressWatchEventsUntilMs = Date.now() + 500;
             writeFileAtomic.sync(this.configFile, JSON.stringify(parsed, null, 2), {
               encoding: "utf-8",
             });
+            this.markPendingSelfWrite();
           } catch (error) {
             // Keep startup resilient even if persisting migration fails.
             log.warn("Failed to persist migrated config", { error });
@@ -1198,8 +1221,8 @@ export class Config {
         data.onePasswordAccountName = onePasswordAccountName;
       }
 
-      this.suppressWatchEventsUntilMs = Date.now() + 500;
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
+      this.markPendingSelfWrite();
     } catch (error) {
       log.error("Error saving config:", error);
     }
