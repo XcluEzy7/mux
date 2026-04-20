@@ -61,6 +61,8 @@ interface WorkspacePRCacheEntry {
   prLink: GitHubPRLink | null;
   /** PR status if available */
   status?: GitHubPRStatus;
+  /** Full typed PR watcher payload for details/remediation UIs. */
+  feed?: WorkspacePullRequestFeed;
   error?: string;
   fetchedAt: number;
   loading: boolean;
@@ -221,6 +223,7 @@ export class PRStatusStore {
     this.workspacePRCache.set(workspaceId, {
       prLink: existing?.prLink ?? null,
       status: existing?.status,
+      feed: existing?.feed,
       loading: true,
       fetchedAt: Date.now(),
     });
@@ -234,6 +237,7 @@ export class PRStatusStore {
         this.workspacePRCache.set(workspaceId, {
           prLink: existing?.prLink ?? null,
           status: existing?.status,
+          feed: existing?.feed,
           error: result.error,
           loading: false,
           fetchedAt: Date.now(),
@@ -250,6 +254,7 @@ export class PRStatusStore {
       this.workspacePRCache.set(workspaceId, {
         prLink: existing?.prLink ?? null,
         status: existing?.status,
+        feed: existing?.feed,
         error: err instanceof Error ? err.message : "Unknown error",
         loading: false,
         fetchedAt: Date.now(),
@@ -263,6 +268,7 @@ export class PRStatusStore {
       this.workspacePRCache.set(workspaceId, {
         prLink: null,
         status: undefined,
+        feed,
         loading: false,
         fetchedAt: feed.fetchedAt,
       });
@@ -283,6 +289,7 @@ export class PRStatusStore {
     this.workspacePRCache.set(workspaceId, {
       prLink,
       status,
+      feed,
       loading: false,
       fetchedAt: feed.fetchedAt,
     });
@@ -387,6 +394,19 @@ export function getPRStatusStoreInstance(): PRStatusStore {
 
 // Cache for useWorkspacePR hook to return stable references
 const workspacePRHookCache = new Map<string, GitHubPRLinkWithStatus | null>();
+
+/**
+ * Hook to get the full typed PR watcher feed for a workspace.
+ * Returns null before the first successful fetch for that workspace.
+ */
+export function useWorkspacePullRequestFeed(workspaceId: string): WorkspacePullRequestFeed | null {
+  const store = getPRStatusStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeWorkspace(workspaceId, listener),
+    () => store.getWorkspacePR(workspaceId)?.feed ?? null
+  );
+}
 
 /**
  * Hook to get PR for a workspace (branch-based detection).

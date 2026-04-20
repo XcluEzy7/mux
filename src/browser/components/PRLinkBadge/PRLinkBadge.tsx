@@ -3,23 +3,31 @@
  */
 
 import {
+  AlertCircle,
+  Check,
+  CircleDot,
   ExternalLink,
   GitPullRequest,
   Loader2,
-  Check,
-  X,
-  AlertCircle,
-  CircleDot,
   Rocket,
+  X,
 } from "lucide-react";
-import type { GitHubPRLinkWithStatus } from "@/common/types/links";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
-import { Button } from "../Button/Button";
+import { useState } from "react";
+import type {
+  GitHubPRLinkWithStatus,
+  PullRequestReviewComment,
+  PullRequestReviewThread,
+  WorkspacePullRequestFeed,
+} from "@/common/types/links";
 import { cn } from "@/common/lib/utils";
+import { Button } from "../Button/Button";
+import { Popover, PopoverContent, PopoverTrigger } from "../Popover/Popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 
 interface PRLinkBadgeProps {
   prLink: GitHubPRLinkWithStatus;
-  onRefresh?: () => void;
+  feed?: WorkspacePullRequestFeed | null;
+  onPushToFix?: (startMessage: string) => Promise<void>;
 }
 
 /**
@@ -180,34 +188,255 @@ export function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
   return lines.join("\n");
 }
 
-export function PRLinkBadge({ prLink }: PRLinkBadgeProps) {
+function getReviewDecisionLabel(reviewDecision: string | null): string {
+  if (!reviewDecision) {
+    return "None";
+  }
+  if (reviewDecision === "APPROVED") {
+    return "Approved";
+  }
+  if (reviewDecision === "REVIEW_REQUIRED") {
+    return "Review required";
+  }
+  if (reviewDecision === "CHANGES_REQUESTED") {
+    return "Changes requested";
+  }
+  return reviewDecision;
+}
+
+export function getReviewerCategoryLabel(
+  category: WorkspacePullRequestFeed["reviewers"][number]["category"]
+): string {
+  if (category === "codex") return "Codex";
+  if (category === "coderabbit") return "CodeRabbit";
+  if (category === "greptile") return "Greptile";
+  if (category === "human") return "Human";
+  return "Unknown bot";
+}
+
+function getThreadLeadComment(thread: PullRequestReviewThread): PullRequestReviewComment | null {
+  return (
+    thread.comments.find((comment) => comment.body.trim().length > 0) ?? thread.comments[0] ?? null
+  );
+}
+
+function getActionableThreads(feed: WorkspacePullRequestFeed): PullRequestReviewThread[] {
+  return feed.threads.filter((thread) => !thread.isResolved && !thread.isOutdated);
+}
+
+export function buildRemediationStartMessage(feed: WorkspacePullRequestFeed): string {
+  const actionableThreads = getActionableThreads(feed);
+  const findings = actionableThreads
+    .map((thread, index) => {
+      const comment = getThreadLeadComment(thread);
+      if (!comment) {
+        return `${index + 1}. [Unknown reviewer] unresolved review thread ${thread.id}`;
+      }
+      const location =
+        comment.path != null
+          ? `${comment.path}${comment.line != null ? `:${comment.line}` : ""}`
+          : "location unavailable";
+      const reviewer = `${comment.author.login} (${getReviewerCategoryLabel(comment.author.category)})`;
+      return `${index + 1}. [${reviewer}] ${location}\n${comment.body.trim()}`;
+    })
+    .join("\n\n");
+
+  const reviewerSummary =
+    feed.reviewers.length > 0
+      ? feed.reviewers
+          .map((reviewer) => `- ${reviewer.login} (${getReviewerCategoryLabel(reviewer.category)})`)
+          .join("\n")
+      : "- No reviewers detected";
+
+  return [
+    "Address pull request feedback in this forked workspace.",
+    "",
+    `PR: ${feed.pr?.url ?? "unknown"}`,
+    `Review decision: ${getReviewDecisionLabel(feed.reviewDecision)}`,
+    `Checks: pending=${feed.checksSummary.hasPendingChecks ? "yes" : "no"}, failed=${feed.checksSummary.hasFailedChecks ? "yes" : "no"}`,
+    `Actionable unresolved threads: ${actionableThreads.length}`,
+    "",
+    "Reviewers:",
+    reviewerSummary,
+    "",
+    "Actionable findings:",
+    findings.length > 0 ? findings : "- No unresolved actionable findings were detected.",
+    "",
+    "Implement fixes for the findings, run relevant validation, commit, push, and re-check PR status.",
+    "Preserve reviewer attribution in your responses and commit notes.",
+  ].join("\n");
+}
+
+function FeedThreadDetails({ thread }: { thread: PullRequestReviewThread }) {
+  const leadComment = getThreadLeadComment(thread);
+
+  if (!leadComment) {
+    return (
+      <div className="text-muted text-xs" data-testid={`pr-thread-${thread.id}`}>
+        Thread {thread.id}
+      </div>
+    );
+  }
+
+  const location =
+    leadComment.path != null
+      ? `${leadComment.path}${leadComment.line != null ? `:${leadComment.line}` : ""}`
+      : "General";
+
+  return (
+    <div className="border-border-light bg-surface-secondary rounded border px-2 py-1.5 text-xs">
+      <div className="text-muted mb-1 flex items-center justify-between gap-2">
+        <span className="truncate">{location}</span>
+        <span className="shrink-0">
+          {leadComment.author.login} · {getReviewerCategoryLabel(leadComment.author.category)}
+        </span>
+      </div>
+      <p className="text-content-primary line-clamp-3 whitespace-pre-wrap">
+        {leadComment.body.trim()}
+      </p>
+    </div>
+  );
+}
+
+export function PRLinkBadge({ prLink, feed, onPushToFix }: PRLinkBadgeProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPushingToFix, setIsPushingToFix] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
   const colorClass = getStatusColorClass(prLink);
   // Show pulse effect when refreshing with cached status (optimistic UI)
   const isRefreshing = prLink.loading && prLink.status != null;
+  const actionableThreadCount = feed ? getActionableThreads(feed).length : 0;
+
+  const handlePushToFix = async () => {
+    if (!feed || !onPushToFix || isPushingToFix) {
+      return;
+    }
+
+    setPushError(null);
+    setIsPushingToFix(true);
+    try {
+      await onPushToFix(buildRemediationStartMessage(feed));
+      setIsOpen(false);
+    } catch (error) {
+      setPushError(error instanceof Error ? error.message : "Failed to fork remediation workspace");
+    } finally {
+      setIsPushingToFix(false);
+    }
+  };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-6 gap-1 px-2 text-xs font-medium",
-            colorClass,
-            isRefreshing && "animate-pulse"
-          )}
-          asChild
-        >
-          <a href={prLink.url} target="_blank" rel="noopener noreferrer">
-            <StatusIcon prLink={prLink} />
-            <span>#{prLink.number}</span>
-            <ExternalLink className="h-3 w-3 opacity-50" />
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-6 gap-1 px-2 text-xs font-medium",
+                colorClass,
+                isRefreshing && "animate-pulse"
+              )}
+            >
+              <StatusIcon prLink={prLink} />
+              <span>#{prLink.number}</span>
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent align="center" className="whitespace-pre-line">
+          {getTooltipContent(prLink)}
+        </TooltipContent>
+      </Tooltip>
+
+      <PopoverContent align="end" side="bottom" className="w-[460px] max-w-[90vw] p-0">
+        <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-content-primary truncate text-xs font-semibold">
+              {prLink.status?.title ?? `PR #${prLink.number}`}
+            </p>
+            <p className="text-muted text-xs">#{prLink.number}</p>
+          </div>
+          <a
+            href={prLink.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted hover:text-content-primary inline-flex items-center gap-1 text-xs"
+          >
+            Open PR
+            <ExternalLink className="h-3 w-3" />
           </a>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent align="center" className="whitespace-pre-line">
-        {getTooltipContent(prLink)}
-      </TooltipContent>
-    </Tooltip>
+        </div>
+
+        {feed ? (
+          <div className="space-y-3 px-3 py-2">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+              <span className="text-muted">Review decision</span>
+              <span className="text-content-primary">
+                {getReviewDecisionLabel(feed.reviewDecision)}
+              </span>
+              <span className="text-muted">Checks</span>
+              <span className="text-content-primary">
+                pending {feed.checksSummary.hasPendingChecks ? "yes" : "no"}, failed{" "}
+                {feed.checksSummary.hasFailedChecks ? "yes" : "no"}
+              </span>
+              <span className="text-muted">Reviewers</span>
+              <span className="text-content-primary">{feed.reviewers.length}</span>
+              <span className="text-muted">Unresolved threads</span>
+              <span className="text-content-primary">{actionableThreadCount}</span>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-muted text-[11px] uppercase">Reviewers</p>
+              {feed.reviewers.length > 0 ? (
+                <ul className="space-y-1">
+                  {feed.reviewers.map((reviewer) => (
+                    <li
+                      key={`${reviewer.login}-${reviewer.category}`}
+                      className="border-border-light bg-surface-secondary flex items-center justify-between rounded border px-2 py-1 text-xs"
+                    >
+                      <span className="text-content-primary">{reviewer.login}</span>
+                      <span className="text-muted">
+                        {getReviewerCategoryLabel(reviewer.category)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted text-xs">No reviewers detected yet.</p>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-muted text-[11px] uppercase">Review threads</p>
+              {feed.threads.length > 0 ? (
+                <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
+                  {feed.threads.slice(0, 8).map((thread) => (
+                    <FeedThreadDetails key={thread.id} thread={thread} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted text-xs">No review threads detected yet.</p>
+              )}
+            </div>
+
+            {onPushToFix && (
+              <div className="border-border-light flex items-center justify-between gap-2 border-t pt-2">
+                <div className="text-muted text-xs">
+                  Push unresolved findings to a remediation fork workspace.
+                </div>
+                <Button type="button" size="sm" onClick={handlePushToFix} disabled={isPushingToFix}>
+                  {isPushingToFix ? "Forking…" : "Push to agent to fix"}
+                </Button>
+              </div>
+            )}
+
+            {pushError && <p className="text-danger-soft text-xs">{pushError}</p>}
+          </div>
+        ) : (
+          <div className="text-muted px-3 py-3 text-xs">Loading pull request details…</div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

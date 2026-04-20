@@ -11,8 +11,10 @@ import type * as TelemetryEnabledContextModuleType from "@/browser/contexts/Tele
 import type * as WorkspaceTitleEditContextModuleType from "@/browser/contexts/WorkspaceTitleEditContext";
 import type * as ContextMenuPositionModuleType from "@/browser/hooks/useContextMenuPosition";
 import type * as ExperimentsModuleType from "@/browser/hooks/useExperiments";
+import type * as WorkspaceHeartbeatModalModuleType from "../WorkspaceHeartbeatModal";
 import type * as WorkspaceFallbackModelModuleType from "@/browser/hooks/useWorkspaceFallbackModel";
 import type * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
+import type * as PRStatusStoreModuleType from "@/browser/stores/PRStatusStore";
 import type * as RuntimeStatusStoreModuleType from "@/browser/stores/RuntimeStatusStore";
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as TooltipModule from "../Tooltip/Tooltip";
@@ -31,6 +33,7 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 type MockWorkspaceUnreadState = ReturnType<typeof WorkspaceUnreadModule.useWorkspaceUnread>;
 type MockWorkspaceSidebarState = ReturnType<typeof WorkspaceStoreModule.useWorkspaceSidebarState>;
 
+let mockWorkspacePR: { number: number; url: string } | null = null;
 let mockWorkspaceHeartbeatsEnabled = false;
 let mockWorkspaceUnreadState: MockWorkspaceUnreadState;
 let mockWorkspaceSidebarState: MockWorkspaceSidebarState;
@@ -122,8 +125,12 @@ function installAgentListItemTestDoubles() {
     require("@/browser/hooks/useExperiments?real=1") as typeof ExperimentsModuleType;
   const actualWorkspaceUnread =
     require("@/browser/hooks/useWorkspaceUnread?real=1") as typeof WorkspaceUnreadModule;
+  const actualPRStatusStore =
+    require("@/browser/stores/PRStatusStore?real=1") as typeof PRStatusStoreModuleType;
   const actualRuntimeStatusStore =
     require("@/browser/stores/RuntimeStatusStore?real=1") as typeof RuntimeStatusStoreModuleType;
+  const actualWorkspaceHeartbeatModal =
+    require("../WorkspaceHeartbeatModal?real=1") as typeof WorkspaceHeartbeatModalModuleType;
   const actualWorkspaceFallbackModel =
     require("@/browser/hooks/useWorkspaceFallbackModel?real=1") as typeof WorkspaceFallbackModelModuleType;
   const actualWorkspaceStore =
@@ -195,9 +202,31 @@ function installAgentListItemTestDoubles() {
     useWorkspaceUnread: () => mockWorkspaceUnreadState,
   }));
 
+  void mock.module("@/browser/stores/PRStatusStore", () => ({
+    ...actualPRStatusStore,
+    useWorkspacePR: () =>
+      mockWorkspacePR
+        ? {
+            type: "github-pr",
+            owner: "coder",
+            repo: "mux",
+            number: mockWorkspacePR.number,
+            url: mockWorkspacePR.url,
+            detectedAt: 0,
+            occurrenceCount: 1,
+            loading: false,
+          }
+        : null,
+  }));
+
   void mock.module("@/browser/stores/RuntimeStatusStore", () => ({
     ...actualRuntimeStatusStore,
     useRuntimeStatus: () => null,
+  }));
+
+  void mock.module("../WorkspaceHeartbeatModal", () => ({
+    ...actualWorkspaceHeartbeatModal,
+    WorkspaceHeartbeatModal: () => null,
   }));
 
   void mock.module("@/browser/hooks/useWorkspaceFallbackModel", () => ({
@@ -256,6 +285,7 @@ describe("AgentListItem", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     mockWorkspaceHeartbeatsEnabled = false;
+    mockWorkspacePR = null;
     mockWorkspaceUnreadState = createWorkspaceUnreadState();
     mockWorkspaceSidebarState = createWorkspaceSidebarState();
     installAgentListItemTestDoubles();
@@ -281,6 +311,24 @@ describe("AgentListItem", () => {
       rowView.getByTestId(`workspace-inline-archiving-status-${TEST_WORKSPACE_ID}`)
     ).toBeTruthy();
     expect(rowView.queryByTestId(`workspace-secondary-row-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("renders a compact linked PR indicator when workspace has a PR", () => {
+    mockWorkspacePR = { number: 42, url: "https://github.com/coder/mux/pull/42" };
+
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    const indicator = rowView.getByTestId(`workspace-pr-indicator-${TEST_WORKSPACE_ID}`);
+    expect(indicator.getAttribute("href")).toBe("https://github.com/coder/mux/pull/42");
+    expect(indicator.textContent).toContain("#42");
+  });
+
+  test("does not render linked PR indicator when workspace has no PR", () => {
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    expect(rowView.queryByTestId(`workspace-pr-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
   test("renders a heartbeat icon directly in the leading slot for seen rows when the heartbeat experiment is enabled", () => {
