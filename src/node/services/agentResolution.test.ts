@@ -64,6 +64,7 @@ describe("composeEffectiveToolPolicy", () => {
     const policy = composeEffectiveToolPolicy({
       globalToolsPolicy: [{ action: "disable", regex_match: "bash" }],
       agentToolPolicy: [{ action: "enable", regex_match: ".*" }],
+      runtimeSafetyToolPolicy: [],
       callerToolPolicy: undefined,
     });
 
@@ -73,10 +74,8 @@ describe("composeEffectiveToolPolicy", () => {
   it("keeps runtime hard-deny precedence over global allow defaults", () => {
     const policy = composeEffectiveToolPolicy({
       globalToolsPolicy: [{ action: "enable", regex_match: "switch_agent" }],
-      agentToolPolicy: [
-        { action: "enable", regex_match: ".*" },
-        { action: "disable", regex_match: "switch_agent" },
-      ],
+      agentToolPolicy: [{ action: "enable", regex_match: ".*" }],
+      runtimeSafetyToolPolicy: [{ action: "disable", regex_match: "switch_agent" }],
       callerToolPolicy: undefined,
     });
 
@@ -87,6 +86,7 @@ describe("composeEffectiveToolPolicy", () => {
     const policy = composeEffectiveToolPolicy({
       globalToolsPolicy: [],
       agentToolPolicy: [{ action: "require", regex_match: "file_read" }],
+      runtimeSafetyToolPolicy: [],
       callerToolPolicy: [{ action: "require", regex_match: "task" }],
     });
 
@@ -96,10 +96,25 @@ describe("composeEffectiveToolPolicy", () => {
   it("keeps runtime required-tool constraints stronger than caller requires", () => {
     const policy = composeEffectiveToolPolicy({
       globalToolsPolicy: [],
-      agentToolPolicy: [{ action: "require", regex_match: "agent_report" }],
+      agentToolPolicy: [],
+      runtimeSafetyToolPolicy: [{ action: "require", regex_match: "agent_report" }],
       callerToolPolicy: [{ action: "require", regex_match: "task" }],
     });
 
     expect(policy).toEqual([{ action: "require", regex_match: "agent_report" }]);
+  });
+
+  it("does not treat agent-authored runtime-shaped filters as runtime safety policy", () => {
+    const policy = composeEffectiveToolPolicy({
+      globalToolsPolicy: [],
+      agentToolPolicy: [
+        { action: "enable", regex_match: ".*" },
+        { action: "disable", regex_match: "switch_agent" },
+      ],
+      runtimeSafetyToolPolicy: [],
+      callerToolPolicy: [{ action: "enable", regex_match: "switch_agent" }],
+    });
+
+    expect(applyToolPolicyToNames(["switch_agent"], policy)).toEqual(["switch_agent"]);
   });
 });
