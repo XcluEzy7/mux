@@ -185,9 +185,17 @@ export class MCPConfigService {
         continue;
       }
 
+      const trimmedCommand = customTool.command.trim();
+      if (trimmedCommand.length === 0) {
+        log.warn("Skipping synthetic custom tool MCP server with blank command", {
+          customToolId: customTool.id,
+        });
+        continue;
+      }
+
       customServers[getCustomToolMcpServerName(customTool.id)] = {
         transport: "stdio",
-        command: buildQuotedCommand(customTool.command, customTool.args),
+        command: buildQuotedCommand(trimmedCommand, customTool.args),
         disabled: false,
       };
     }

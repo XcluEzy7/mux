@@ -83,6 +83,13 @@ describe("MCPConfigService", () => {
             args: ["@acme/disabled"],
             enabled: false,
           },
+          {
+            id: "blank-command",
+            label: "Blank Command",
+            command: "   ",
+            args: ["@acme/blank"],
+            enabled: true,
+          },
         ],
       };
       return cfg;
@@ -98,6 +105,7 @@ describe("MCPConfigService", () => {
       },
     });
     expect(servers["custom-tool:disabled"]).toBeUndefined();
+    expect(servers["custom-tool:blank-command"]).toBeUndefined();
   });
 
   test("listServers can omit synthetic custom-tool servers for settings editing", async () => {

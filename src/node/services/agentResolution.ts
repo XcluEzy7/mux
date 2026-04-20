@@ -30,7 +30,7 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
+import { resolveToolPolicyLayersForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { log } from "./log";
 import { getTaskDepthFromConfig } from "./taskUtils";
 import { createAssistantMessageId } from "./utils/messageIds";
@@ -76,48 +76,27 @@ export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
 
 export interface ComposeEffectiveToolPolicyOptions {
   agentToolPolicy: ToolPolicy;
+  runtimeSafetyToolPolicy: ToolPolicy;
   callerToolPolicy: ToolPolicy | undefined;
   globalToolsPolicy: ToolPolicy;
 }
 
-const RUNTIME_SAFETY_TOOL_POLICY_KEYS = new Set([
-  "disable:task",
-  "disable:task_.*",
-  "disable:ask_user_question",
-  "disable:switch_agent",
-  "disable:propose_plan",
-  "disable:agent_report",
-  "require:switch_agent",
-  "require:propose_plan",
-  "require:agent_report",
-  "enable:advisor",
-  "disable:advisor",
-]);
-
-function isRuntimeSafetyPolicyFilter(filter: ToolPolicy[number]): boolean {
-  return RUNTIME_SAFETY_TOOL_POLICY_KEYS.has(`${filter.action}:${filter.regex_match}`);
-}
-
 export function composeEffectiveToolPolicy({
   agentToolPolicy,
+  runtimeSafetyToolPolicy,
   callerToolPolicy,
   globalToolsPolicy,
 }: ComposeEffectiveToolPolicyOptions): ToolPolicy | undefined {
-  const runtimeSafetyPolicy = agentToolPolicy.filter(isRuntimeSafetyPolicyFilter);
-  const agentPolicyWithoutRuntimeSafety = agentToolPolicy.filter(
-    (filter) => !isRuntimeSafetyPolicyFilter(filter)
-  );
-
   const callerRequiresTool =
     callerToolPolicy?.some((filter) => filter.action === "require") === true;
   const runtimeRequiresTool =
-    runtimeSafetyPolicy.some((filter) => filter.action === "require") === true;
+    runtimeSafetyToolPolicy.some((filter) => filter.action === "require") === true;
 
   // Caller require policies can override agent-authored require patterns, but runtime safety
   // requirements (subagent completion, switch_agent gating) remain authoritative.
   const agentPolicyForComposition = callerRequiresTool
-    ? agentPolicyWithoutRuntimeSafety.filter((filter) => filter.action !== "require")
-    : agentPolicyWithoutRuntimeSafety;
+    ? agentToolPolicy.filter((filter) => filter.action !== "require")
+    : agentToolPolicy;
   const callerPolicyForComposition =
     callerRequiresTool && runtimeRequiresTool
       ? callerToolPolicy?.filter((filter) => filter.action !== "require")
@@ -126,13 +105,13 @@ export function composeEffectiveToolPolicy({
   // Order of precedence (last matching filter wins):
   // 1) agent-authored defaults
   // 2) global defaults from config
-  // 3) runtime safety constraints (must not be overridden)
-  // 4) caller restrictions
+  // 3) caller restrictions
+  // 4) runtime safety constraints (must not be overridden)
   const composedPolicy = [
     ...agentPolicyForComposition,
     ...globalToolsPolicy,
-    ...runtimeSafetyPolicy,
     ...(callerPolicyForComposition ?? []),
+    ...runtimeSafetyToolPolicy,
   ];
 
   return composedPolicy.length > 0 ? composedPolicy : undefined;
@@ -317,7 +296,8 @@ export async function resolveAgentForStream(
   const advisorEnabled =
     isAdvisorExperimentEnabled === true &&
     cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
-  const agentToolPolicy = resolveToolPolicyForAgent({
+  const { agentPolicy: agentToolPolicy, runtimePolicy: runtimeSafetyToolPolicy } =
+    resolveToolPolicyLayersForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
@@ -327,6 +307,7 @@ export async function resolveAgentForStream(
   const globalToolsPolicy = buildGlobalToolsPolicy(cfg);
   const effectiveToolPolicy = composeEffectiveToolPolicy({
     agentToolPolicy,
+    runtimeSafetyToolPolicy,
     callerToolPolicy,
     globalToolsPolicy,
   });
