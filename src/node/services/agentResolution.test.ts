@@ -27,6 +27,19 @@ describe("buildGlobalToolsPolicy", () => {
     expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: "bash" }]);
   });
 
+  it("builds deny_all_except blanket disable rule for an empty allowlist", () => {
+    const config = createBaseConfig();
+    config.tools = {
+      defaults: {
+        mode: "deny_all_except",
+        toolNames: [],
+      },
+      custom: [],
+    };
+
+    expect(buildGlobalToolsPolicy(config)).toEqual([{ action: "disable", regex_match: ".*" }]);
+  });
+
   it("builds deny_all_except with escaped names", () => {
     const config = createBaseConfig();
     config.tools = {

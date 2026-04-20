@@ -12,6 +12,7 @@ import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import type { ToolsConfig } from "@/common/config/schemas";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -191,6 +192,40 @@ function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): numb
   assert(Number.isInteger(value), "Advisor max output tokens must be an integer");
   assert(value > 0, "Advisor max output tokens must be positive");
   return value;
+}
+
+export function normalizeToolsConfigForSave(tools: ToolsConfig): ToolsConfig {
+  return {
+    defaults: {
+      mode: tools.defaults.mode === "deny_all_except" ? "deny_all_except" : "allow_all_except",
+      toolNames: tools.defaults.toolNames.filter((name) => name.trim().length > 0),
+    },
+    custom: tools.custom
+      .filter(
+        (tool) =>
+          tool.id.trim().length > 0 &&
+          tool.label.trim().length > 0 &&
+          tool.command.trim().length > 0
+      )
+      .map((tool) => ({
+        ...tool,
+        id: tool.id.trim(),
+        label: tool.label.trim(),
+        command: tool.command.trim(),
+        // Preserve intentionally-empty argv entries (e.g. quoted "") so
+        // the quote-aware args editor round-trips exactly.
+        args: tool.args.filter((arg): arg is string => typeof arg === "string"),
+        instructions: tool.instructions?.trim() ? tool.instructions.trim() : undefined,
+        provenance: tool.provenance
+          ? {
+              links: tool.provenance.links
+                ?.map((link) => link.trim())
+                .filter((link) => link.length > 0),
+              package: tool.provenance.package?.trim() ? tool.provenance.package.trim() : undefined,
+            }
+          : undefined,
+      })),
+  };
 }
 
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
@@ -790,42 +825,7 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => {
             return {
               ...config,
-              tools: {
-                defaults: {
-                  mode:
-                    input.tools.defaults.mode === "deny_all_except"
-                      ? "deny_all_except"
-                      : "allow_all_except",
-                  toolNames: input.tools.defaults.toolNames.filter(
-                    (name) => name.trim().length > 0
-                  ),
-                },
-                custom: input.tools.custom
-                  .filter(
-                    (tool) =>
-                      tool.id.trim().length > 0 &&
-                      tool.label.trim().length > 0 &&
-                      tool.command.trim().length > 0
-                  )
-                  .map((tool) => ({
-                    ...tool,
-                    id: tool.id.trim(),
-                    label: tool.label.trim(),
-                    command: tool.command.trim(),
-                    args: tool.args.map((arg) => arg.trim()).filter((arg) => arg.length > 0),
-                    instructions: tool.instructions?.trim() ? tool.instructions.trim() : undefined,
-                    provenance: tool.provenance
-                      ? {
-                          links: tool.provenance.links
-                            ?.map((link) => link.trim())
-                            .filter((link) => link.length > 0),
-                          package: tool.provenance.package?.trim()
-                            ? tool.provenance.package.trim()
-                            : undefined,
-                        }
-                      : undefined,
-                  })),
-              },
+              tools: normalizeToolsConfigForSave(input.tools),
             };
           });
         }),
