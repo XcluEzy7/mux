@@ -36,6 +36,39 @@ import { getTaskDepthFromConfig } from "./taskUtils";
 import { createAssistantMessageId } from "./utils/messageIds";
 import { createErrorEvent } from "./utils/sendMessageError";
 
+function escapeToolNameForRegex(toolName: string): string {
+  return toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
+  const toolsDefaults = cfg.tools?.defaults;
+  if (!toolsDefaults || toolsDefaults.toolNames.length === 0) {
+    return [];
+  }
+
+  const validToolNames = Array.from(
+    new Set(toolsDefaults.toolNames.map((name) => name.trim()).filter((name) => name.length > 0))
+  );
+  if (validToolNames.length === 0) {
+    return [];
+  }
+
+  if (toolsDefaults.mode === "deny_all_except") {
+    return [
+      { action: "disable", regex_match: ".*" },
+      ...validToolNames.map((name) => ({
+        action: "enable" as const,
+        regex_match: escapeToolNameForRegex(name),
+      })),
+    ];
+  }
+
+  return validToolNames.map((name) => ({
+    action: "disable" as const,
+    regex_match: escapeToolNameForRegex(name),
+  }));
+}
+
 /** Options for agent resolution. */
 export interface ResolveAgentOptions {
   workspaceId: string;
@@ -229,10 +262,11 @@ export async function resolveAgentForStream(
   const agentToolPolicyForComposition = callerRequiresTool
     ? agentToolPolicy.filter((filter) => filter.action !== "require")
     : agentToolPolicy;
+  const globalToolsPolicy = buildGlobalToolsPolicy(cfg);
 
   const effectiveToolPolicy: ToolPolicy | undefined =
-    callerToolPolicy || agentToolPolicyForComposition.length > 0
-      ? [...agentToolPolicyForComposition, ...(callerToolPolicy ?? [])]
+    callerToolPolicy || agentToolPolicyForComposition.length > 0 || globalToolsPolicy.length > 0
+      ? [...agentToolPolicyForComposition, ...globalToolsPolicy, ...(callerToolPolicy ?? [])]
       : undefined;
 
   return Ok({

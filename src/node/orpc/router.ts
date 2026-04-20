@@ -660,6 +660,10 @@ export const router = (authToken?: string) => {
           const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            tools: config.tools ?? {
+              defaults: { mode: "allow_all_except", toolNames: [] },
+              custom: [],
+            },
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
             routePriority: config.routePriority,
@@ -776,6 +780,50 @@ export const router = (authToken?: string) => {
               // Legacy fields (downgrade compatibility)
               subagentAiDefaults:
                 Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
+            };
+          });
+        }),
+      updateToolsConfig: t
+        .input(schemas.config.updateToolsConfig.input)
+        .output(schemas.config.updateToolsConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            return {
+              ...config,
+              tools: {
+                defaults: {
+                  mode:
+                    input.tools.defaults.mode === "deny_all_except"
+                      ? "deny_all_except"
+                      : "allow_all_except",
+                  toolNames: input.tools.defaults.toolNames.filter(
+                    (name) => name.trim().length > 0
+                  ),
+                },
+                custom: input.tools.custom
+                  .filter(
+                    (tool) =>
+                      tool.id.trim().length > 0 &&
+                      tool.label.trim().length > 0 &&
+                      tool.command.trim().length > 0
+                  )
+                  .map((tool) => ({
+                    ...tool,
+                    id: tool.id.trim(),
+                    label: tool.label.trim(),
+                    command: tool.command.trim(),
+                    args: tool.args?.map((arg) => arg.trim()).filter((arg) => arg.length > 0),
+                    instructions: tool.instructions?.trim() || undefined,
+                    provenance: tool.provenance
+                      ? {
+                          links: tool.provenance.links
+                            ?.map((link) => link.trim())
+                            .filter((link) => link.length > 0),
+                          package: tool.provenance.package?.trim() || undefined,
+                        }
+                      : undefined,
+                  })),
+              },
             };
           });
         }),

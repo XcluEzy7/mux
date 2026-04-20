@@ -13,7 +13,18 @@ import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
+import { shellQuote } from "@/common/utils/shell";
 import { getErrorMessage } from "@/common/utils/errors";
+
+const CUSTOM_TOOL_SERVER_PREFIX = "custom-tool:";
+
+export function getCustomToolMcpServerName(customToolId: string): string {
+  return `${CUSTOM_TOOL_SERVER_PREFIX}${customToolId}`;
+}
+
+function buildQuotedCommand(command: string, args?: string[]): string {
+  return [command, ...(args ?? [])].map((arg) => shellQuote(arg)).join(" ");
+}
 
 export class MCPConfigService {
   private readonly config: Config;
@@ -163,6 +174,28 @@ export class MCPConfigService {
     return this.readConfigFile(this.getRepoOverridePath(projectPath));
   }
 
+  private getCustomToolServers(): Record<string, MCPServerInfo> {
+    const tools = this.config.loadConfigOrDefault().tools;
+    if (!tools?.custom?.length) {
+      return {};
+    }
+
+    const customServers: Record<string, MCPServerInfo> = {};
+    for (const customTool of tools.custom) {
+      if (!customTool.enabled) {
+        continue;
+      }
+
+      customServers[getCustomToolMcpServerName(customTool.id)] = {
+        transport: "stdio",
+        command: buildQuotedCommand(customTool.command, customTool.args),
+        disabled: false,
+      };
+    }
+
+    return customServers;
+  }
+
   private async saveGlobalConfig(config: MCPConfig): Promise<void> {
     await this.ensureMuxRootDir();
 
@@ -222,22 +255,31 @@ export class MCPConfigService {
    */
   async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
+    const customToolServers = this.getCustomToolServers();
 
     if (!projectPath) {
-      return globalCfg.servers;
+      return {
+        ...globalCfg.servers,
+        ...customToolServers,
+      };
     }
 
     if (!trusted) {
       log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return globalCfg.servers;
+      return {
+        ...globalCfg.servers,
+        ...customToolServers,
+      };
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
 
-    // Repo overrides win by server name.
+    // Repo overrides win by server name. Custom tools are global-only and use dedicated
+    // server names to avoid clobbering user-defined MCP entries.
     return {
       ...globalCfg.servers,
       ...repoCfg.servers,
+      ...customToolServers,
     };
   }
 

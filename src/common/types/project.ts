@@ -5,7 +5,11 @@
 
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
-import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
+import type {
+  FeatureFlagOverride,
+  ToolsConfig,
+  UpdateChannel,
+} from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
@@ -75,6 +79,10 @@ export interface ProjectsConfig {
   defaultProjectDir?: string;
   /** IDs of splash screens that have been viewed */
   viewedSplashScreens?: string[];
+  /**
+   * Global tool defaults and custom tools (shared via ~/.mux/config.json).
+   */
+  tools?: ToolsConfig;
   /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */

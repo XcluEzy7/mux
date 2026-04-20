@@ -25,7 +25,10 @@ import type {
   WorkspaceStatsSnapshot,
   ServerAuthSession,
 } from "@/common/orpc/types";
-import type { ProjectGitStatusResult as ApiProjectGitStatusResult, TailscaleSshConfig } from "@/common/orpc/schemas/api";
+import type {
+  ProjectGitStatusResult as ApiProjectGitStatusResult,
+  TailscaleSshConfig,
+} from "@/common/orpc/schemas/api";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
@@ -60,6 +63,7 @@ import type {
 } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
+import type { ToolsConfig } from "@/common/config/schemas";
 import type { z } from "zod";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -137,6 +141,7 @@ export interface MockORPCClientOptions {
   /** Initial global heartbeat default interval for config.getConfig */
   heartbeatDefaultIntervalMs?: number;
   /** Initial route priority for config.getConfig */
+  toolsConfig?: ToolsConfig;
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
   routeOverrides?: Record<string, string>;
@@ -354,6 +359,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
+    toolsConfig: initialToolsConfig = {
+      defaults: { mode: "allow_all_except", toolNames: [] },
+      custom: [],
+    },
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -502,6 +511,22 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
+  let toolsConfig: ToolsConfig = {
+    defaults: {
+      mode: initialToolsConfig.defaults.mode,
+      toolNames: [...initialToolsConfig.defaults.toolNames],
+    },
+    custom: initialToolsConfig.custom.map((tool) => ({
+      ...tool,
+      args: tool.args ? [...tool.args] : undefined,
+      provenance: tool.provenance
+        ? {
+            links: tool.provenance.links ? [...tool.provenance.links] : undefined,
+            package: tool.provenance.package,
+          }
+        : undefined,
+    })),
+  };
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
   const configChangeSubscribers = new Set<(value: void) => void>();
@@ -694,6 +719,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getConfig: () =>
         Promise.resolve({
           taskSettings,
+          tools: toolsConfig,
           muxGatewayEnabled,
           muxGatewayModels,
           routePriority,
@@ -758,6 +784,26 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       updateAgentAiDefaults: (input: { agentAiDefaults: unknown }) => {
         agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
         subagentAiDefaults = deriveSubagentAiDefaults();
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateToolsConfig: (input: { tools: ToolsConfig }) => {
+        toolsConfig = {
+          defaults: {
+            mode: input.tools.defaults.mode,
+            toolNames: [...input.tools.defaults.toolNames],
+          },
+          custom: input.tools.custom.map((tool) => ({
+            ...tool,
+            args: tool.args ? [...tool.args] : undefined,
+            provenance: tool.provenance
+              ? {
+                  links: tool.provenance.links ? [...tool.provenance.links] : undefined,
+                  package: tool.provenance.package,
+                }
+              : undefined,
+          })),
+        };
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

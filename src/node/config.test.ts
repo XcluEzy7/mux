@@ -25,6 +25,7 @@ describe("Config", () => {
 
   afterEach(() => {
     // Clean up temporary directory
+    config.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -912,6 +913,57 @@ describe("Config", () => {
       });
 
       expect(notifications).toBe(1);
+    });
+  });
+
+  it("emits when config.json is modified externally", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    let notificationCount = 0;
+    const notificationPromise = new Promise<void>((resolve) => {
+      const unsubscribe = config.onConfigChanged(() => {
+        notificationCount += 1;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    fs.writeFileSync(configFile, JSON.stringify({ routePriority: ["direct"] }));
+
+    await Promise.race([
+      notificationPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for external config change")), 2000)
+      ),
+    ]);
+
+    expect(notificationCount).toBe(1);
+  });
+
+  describe("tools config", () => {
+    it("normalizes invalid tools config into defaults", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          tools: {
+            defaults: { mode: "bad-mode", toolNames: ["bash", "", "bash"] },
+            custom: [
+              { id: "tool-1", label: "Tool 1", command: "npx", enabled: true },
+              { id: "tool-1", label: "duplicate", command: "ignored", enabled: true },
+              { id: "", label: "missing-id", command: "npx", enabled: true },
+            ],
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.tools).toEqual({
+        defaults: { mode: "allow_all_except", toolNames: ["bash"] },
+        custom: [{ id: "tool-1", label: "Tool 1", command: "npx", enabled: true }],
+      });
     });
   });
 

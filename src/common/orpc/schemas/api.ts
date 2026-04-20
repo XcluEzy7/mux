@@ -78,6 +78,7 @@ import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
   SubagentAiDefaultsSchema,
+  ToolsConfigSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
 import {
@@ -1820,6 +1821,7 @@ export const config = {
     input: z.void(),
     output: z.object({
       taskSettings: ResolvedTaskSettingsSchema,
+      tools: ToolsConfigSchema,
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
       routePriority: z.array(z.string()).optional(),
@@ -1866,6 +1868,12 @@ export const config = {
   updateAgentAiDefaults: {
     input: z.object({
       agentAiDefaults: AgentAiDefaultsSchema,
+    }),
+    output: z.void(),
+  },
+  updateToolsConfig: {
+    input: z.object({
+      tools: ToolsConfigSchema,
     }),
     output: z.void(),
   },

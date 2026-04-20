@@ -41,6 +41,8 @@ import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
 
+const CUSTOM_TOOL_SERVER_PREFIX = "custom-tool:";
+
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
   serverName: string;
@@ -1120,6 +1122,10 @@ export const MCPSettingsSection: React.FC = () => {
         }).validation
       : { errors: [], warnings: [] };
 
+  const visibleServers: Record<string, MCPServerInfo> = Object.fromEntries(
+    Object.entries(servers).filter(([name]) => !name.startsWith(CUSTOM_TOOL_SERVER_PREFIX))
+  );
+
   return (
     <div className="space-y-6">
       {/* Intro */}
@@ -1154,10 +1160,10 @@ export const MCPSettingsSection: React.FC = () => {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading servers…
                 </div>
-              ) : Object.keys(servers).length === 0 ? (
+              ) : Object.keys(visibleServers).length === 0 ? (
                 <p className="text-muted py-2 text-sm">No MCP servers configured yet.</p>
               ) : (
-                Object.entries(servers).map(([name, entry]) => {
+                Object.entries(visibleServers).map(([name, entry]) => {
                   const isTesting = testingServer === name;
                   const cached = testCache[name];
                   const isEditing = editing?.name === name;
