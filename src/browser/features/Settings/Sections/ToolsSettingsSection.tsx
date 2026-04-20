@@ -45,11 +45,97 @@ function parseCommaSeparatedValues(input: string): string[] {
     .filter((value) => value.length > 0);
 }
 
-function parseSpaceSeparatedValues(input: string): string[] {
-  return input
-    .split(/\s+/)
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+export interface ParsedArgInput {
+  args: string[];
+  error: string | null;
+}
+
+/**
+ * Parse shell-like arg input while preserving quoted segments and escaped characters.
+ * Supports single/double quotes plus escaping spaces/quotes via backslashes.
+ */
+export function parseQuotedArgInput(input: string): ParsedArgInput {
+  const args: string[] = [];
+  let current = "";
+  let tokenStarted = false;
+  let inSingleQuotes = false;
+  let inDoubleQuotes = false;
+  let escaping = false;
+
+  const pushCurrent = () => {
+    if (tokenStarted) {
+      args.push(current);
+      current = "";
+      tokenStarted = false;
+    }
+  };
+
+  for (const char of input) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\" && !inSingleQuotes) {
+      escaping = true;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuotes) {
+      inSingleQuotes = !inSingleQuotes;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuotes) {
+      inDoubleQuotes = !inDoubleQuotes;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (/\s/.test(char) && !inSingleQuotes && !inDoubleQuotes) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+    tokenStarted = true;
+  }
+
+  if (escaping) {
+    return {
+      args,
+      error: "Arguments cannot end with a trailing backslash.",
+    };
+  }
+
+  if (inSingleQuotes || inDoubleQuotes) {
+    return {
+      args,
+      error: "Close all quoted arguments before saving.",
+    };
+  }
+
+  pushCurrent();
+  return { args, error: null };
+}
+
+export function stringifyArgsForInput(args: string[]): string {
+  return args
+    .map((arg) => {
+      if (arg.length === 0) {
+        return '""';
+      }
+
+      if (!/[\s"'\\]/.test(arg)) {
+        return arg;
+      }
+
+      return `"${arg.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+    })
+    .join(" ");
 }
 
 function getDuplicateValues(values: string[]): string[] {
@@ -113,6 +199,7 @@ export function ToolsSettingsSection() {
   const { api } = useAPI();
   const [toolsConfig, setToolsConfig] = useState<ToolsConfig>(DEFAULT_TOOLS_CONFIG);
   const [toolNamesInput, setToolNamesInput] = useState("");
+  const [customToolArgsInput, setCustomToolArgsInput] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +215,9 @@ export function ToolsSettingsSection() {
       const nextTools = config.tools ?? DEFAULT_TOOLS_CONFIG;
       setToolsConfig(nextTools);
       setToolNamesInput(nextTools.defaults.toolNames.join(", "));
+      setCustomToolArgsInput(
+        nextTools.custom.map((tool) => stringifyArgsForInput(tool.args ?? []))
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load tools settings");
@@ -197,6 +287,7 @@ export function ToolsSettingsSection() {
       ...prev,
       custom: [...prev.custom, createNewCustomTool()],
     }));
+    setCustomToolArgsInput((prev) => [...prev, ""]);
   }, []);
 
   const removeCustomTool = useCallback((index: number) => {
@@ -204,6 +295,7 @@ export function ToolsSettingsSection() {
       ...prev,
       custom: prev.custom.filter((_, toolIndex) => toolIndex !== index),
     }));
+    setCustomToolArgsInput((prev) => prev.filter((_, inputIndex) => inputIndex !== index));
   }, []);
 
   const parsedToolNames = parseCommaSeparatedValues(toolNamesInput);
@@ -237,8 +329,13 @@ export function ToolsSettingsSection() {
     };
   });
 
+  const parsedCustomToolArgs = toolsConfig.custom.map((_, index) =>
+    parseQuotedArgInput(customToolArgsInput[index] ?? "")
+  );
+
   const hasBlockingValidationError =
     duplicateToolNames.length > 0 ||
+    parsedCustomToolArgs.some((parsedArgs) => parsedArgs.error !== null) ||
     customToolValidation.some((validation) =>
       [validation.id, validation.label, validation.command].some((message) => message !== null)
     );
@@ -258,7 +355,10 @@ export function ToolsSettingsSection() {
         mode: toolsConfig.defaults.mode,
         toolNames: parsedToolNames,
       },
-      custom: toolsConfig.custom,
+      custom: toolsConfig.custom.map((tool, index) => ({
+        ...tool,
+        args: parsedCustomToolArgs[index]?.args ?? [],
+      })),
     };
 
     setSaving(true);
@@ -270,11 +370,12 @@ export function ToolsSettingsSection() {
     } finally {
       setSaving(false);
     }
-  }, [api, hasBlockingValidationError, parsedToolNames, toolsConfig]);
+  }, [api, hasBlockingValidationError, parsedCustomToolArgs, parsedToolNames, toolsConfig]);
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
+      <div className="border-border-medium bg-background-secondary space-y-2 rounded-md border p-4">
+        <h3 className="text-foreground text-sm font-medium">Tool access and registration</h3>
         <p className="text-muted text-xs">
           Configure global tool defaults and custom tools stored in <code>~/.mux/config.json</code>.
         </p>
@@ -371,7 +472,6 @@ export function ToolsSettingsSection() {
           <div className="space-y-3">
             {toolsConfig.custom.map((tool, index) => {
               const fieldErrors = customToolValidation[index];
-              const argsInputValue = (tool.args ?? []).join(" ");
               const linksInputValue = (tool.provenance?.links ?? []).join(", ");
 
               return (
@@ -463,20 +563,40 @@ export function ToolsSettingsSection() {
                   </div>
 
                   <div>
-                    <FieldLabel>Args (space-separated)</FieldLabel>
+                    <FieldLabel>Args (quote-aware)</FieldLabel>
                     <Input
-                      value={argsInputValue}
-                      onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                        updateCustomTool(index, (prev) => ({
-                          ...prev,
-                          args: parseSpaceSeparatedValues(event.target.value),
-                        }))
-                      }
-                      placeholder="server.py --stdio"
+                      value={customToolArgsInput[index] ?? ""}
+                      onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                        setCustomToolArgsInput((prev) => {
+                          const next = [...prev];
+                          next[index] = event.target.value;
+                          return next;
+                        });
+                      }}
+                      onBlur={() => {
+                        const parsed = parsedCustomToolArgs[index];
+                        if (parsed?.error) {
+                          return;
+                        }
+                        setCustomToolArgsInput((prev) => {
+                          const next = [...prev];
+                          next[index] = stringifyArgsForInput(parsed?.args ?? []);
+                          return next;
+                        });
+                      }}
+                      placeholder='server.py --mode "safe sandbox"'
+                      aria-invalid={parsedCustomToolArgs[index]?.error !== null}
                     />
                     <p className="text-muted mt-1 text-xs">
-                      Enter command arguments in execution order, separated by spaces.
+                      Use quotes for arguments with spaces. Example:{" "}
+                      <code>&quot;s3://my bucket&quot;</code>. Backslashes escape spaces and quotes.
                     </p>
+                    <FieldError message={parsedCustomToolArgs[index]?.error ?? null} />
+                    {(parsedCustomToolArgs[index]?.args.length ?? 0) > 0 ? (
+                      <p className="text-muted mt-1 text-xs">
+                        Parsed args: {parsedCustomToolArgs[index]?.args.join(" | ")}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div>
@@ -544,7 +664,7 @@ export function ToolsSettingsSection() {
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="border-border-medium bg-background-secondary flex flex-wrap items-center gap-2 rounded-md border px-4 py-3">
         <Button
           onClick={() => void save()}
           disabled={loading || saving || hasBlockingValidationError}
@@ -552,11 +672,15 @@ export function ToolsSettingsSection() {
           {saving ? "Saving…" : "Save tools settings"}
         </Button>
         <Button variant="outline" onClick={() => void load()} disabled={loading || saving}>
-          Reset
+          Reload from disk
         </Button>
         {hasBlockingValidationError ? (
-          <p className="text-error text-xs">Resolve validation issues to save.</p>
-        ) : null}
+          <p className="text-error text-xs">Resolve validation issues before saving.</p>
+        ) : (
+          <p className="text-muted text-xs">
+            Changes are saved globally and apply to all workspaces.
+          </p>
+        )}
       </div>
     </div>
   );
