@@ -42,16 +42,15 @@ function escapeToolNameForRegex(toolName: string): string {
 
 export function buildGlobalToolsPolicy(cfg: ProjectsConfig): ToolPolicy {
   const toolsDefaults = cfg.tools?.defaults;
-  if (!toolsDefaults || toolsDefaults.toolNames.length === 0) {
+  if (!toolsDefaults) {
     return [];
   }
 
   const validToolNames = Array.from(
-    new Set(toolsDefaults.toolNames.map((name) => name.trim()).filter((name) => name.length > 0))
+    new Set(
+      (toolsDefaults.toolNames ?? []).map((name) => name.trim()).filter((name) => name.length > 0)
+    )
   );
-  if (validToolNames.length === 0) {
-    return [];
-  }
 
   if (toolsDefaults.mode === "deny_all_except") {
     return [
