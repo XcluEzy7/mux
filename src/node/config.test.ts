@@ -1012,6 +1012,48 @@ describe("Config", () => {
     expect(notificationCount).toBe(1);
   });
 
+  it("does not ignore null-signature events after handling a self-write event", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      watchCallback?.("change", path.basename(configFile));
+      expect(notifications).toBe(0);
+
+      fs.rmSync(configFile, { force: true });
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
   describe("tools config", () => {
     it("normalizes invalid tools config into defaults", () => {
       const configFile = path.join(tempDir, "config.json");

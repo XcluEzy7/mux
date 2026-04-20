@@ -77,7 +77,9 @@ export function parseQuotedArgInput(input: string): ParsedArgInput {
     }
   };
 
-  for (const char of input) {
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+
     if (escaping) {
       current += char;
       escaping = false;
@@ -85,6 +87,21 @@ export function parseQuotedArgInput(input: string): ParsedArgInput {
     }
 
     if (char === "\\" && !inSingleQuotes) {
+      if (inDoubleQuotes) {
+        const nextChar = input[index + 1];
+        const isDoubleQuoteEscape =
+          nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`";
+        if (isDoubleQuoteEscape) {
+          escaping = true;
+          tokenStarted = true;
+          continue;
+        }
+
+        current += "\\";
+        tokenStarted = true;
+        continue;
+      }
+
       escaping = true;
       tokenStarted = true;
       continue;
