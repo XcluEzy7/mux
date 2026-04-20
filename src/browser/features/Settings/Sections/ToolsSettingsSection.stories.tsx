@@ -44,7 +44,7 @@ export const Configured: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    await canvas.findByRole("heading", { name: /Tool access and registration/i });
+    await canvas.findByRole("heading", { name: /Tool access and custom tools/i });
     await canvas.findByRole("heading", { name: /Global defaults/i });
     await canvas.findByRole("heading", { name: /Custom tools/i });
     await canvas.findByDisplayValue('tool.py --scope "workspace root"');
@@ -73,6 +73,7 @@ export const ArgValidation: Story = {
       await canvas.findByText(/Close all quoted arguments before saving/i);
     });
 
+    await canvas.findByText(/validation issue/i);
     const saveButton = await canvas.findByRole("button", { name: /Save tools settings/i });
     if (!(saveButton as HTMLButtonElement).disabled) {
       throw new Error("Save button should be disabled while args parsing has errors");

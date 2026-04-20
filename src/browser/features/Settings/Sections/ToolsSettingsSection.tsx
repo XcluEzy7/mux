@@ -170,12 +170,74 @@ interface CustomToolFieldErrors {
   provenanceLinks: string | null;
 }
 
+interface CustomToolValidationResult {
+  fieldErrors: CustomToolFieldErrors;
+  blockingErrors: string[];
+  warnings: string[];
+}
+
+const CUSTOM_TOOL_ID_PATTERN = /^[a-z0-9_-]+$/;
+
 function getModeDescription(mode: ToolsDefaultMode): string {
   if (mode === "allow_all_except") {
     return "All tools are available by default. Names in the list are blocked globally.";
   }
 
   return "All tools are blocked by default. Only names in the list are globally allowed.";
+}
+
+function getValidationSummaryLabel(issueCount: number): string {
+  if (issueCount === 0) {
+    return "No validation issues";
+  }
+
+  return `${issueCount} validation issue${issueCount === 1 ? "" : "s"}`;
+}
+
+function buildCustomToolValidation(
+  tool: CustomTool,
+  duplicateCustomToolIds: string[]
+): CustomToolValidationResult {
+  const id = tool.id.trim();
+  const label = tool.label.trim();
+  const command = tool.command.trim();
+
+  const links = (tool.provenance?.links ?? []).filter((link) => link.trim().length > 0);
+  const invalidLinks = links.filter((link) => !isValidUrl(link));
+
+  let idError: string | null = null;
+  if (id.length === 0) {
+    idError = "Tool ID is required.";
+  } else if (/\s/.test(id)) {
+    idError = "Tool ID cannot include spaces.";
+  } else if (!CUSTOM_TOOL_ID_PATTERN.test(id)) {
+    idError = "Use lowercase letters, numbers, hyphens, or underscores.";
+  } else if (duplicateCustomToolIds.includes(id)) {
+    idError = `Tool ID "${id}" is duplicated.`;
+  }
+
+  const fieldErrors: CustomToolFieldErrors = {
+    id: idError,
+    label: label.length === 0 ? "Display label is required." : null,
+    command: command.length === 0 ? "Command is required." : null,
+    provenanceLinks:
+      invalidLinks.length > 0
+        ? `Invalid URL${invalidLinks.length > 1 ? "s" : ""}: ${invalidLinks.join(", ")}`
+        : null,
+  };
+
+  const blockingErrors = [fieldErrors.id, fieldErrors.label, fieldErrors.command].filter(
+    (message): message is string => message !== null
+  );
+  const warnings = [fieldErrors.provenanceLinks].filter(
+    (message): message is string => message !== null
+  );
+
+  return {
+    fieldErrors,
+    blockingErrors,
+    warnings,
+  };
 }
 
 function FieldLabel(props: { children: React.ReactNode; required?: boolean }) {
@@ -305,40 +367,20 @@ export function ToolsSettingsSection() {
     toolsConfig.custom.map((tool) => tool.id.trim()).filter((toolId) => toolId.length > 0)
   );
 
-  const customToolValidation: CustomToolFieldErrors[] = toolsConfig.custom.map((tool) => {
-    const id = tool.id.trim();
-    const label = tool.label.trim();
-    const command = tool.command.trim();
-
-    const links = (tool.provenance?.links ?? []).filter((link) => link.trim().length > 0);
-    const invalidLinks = links.filter((link) => !isValidUrl(link));
-
-    return {
-      id:
-        id.length === 0
-          ? "Tool ID is required."
-          : duplicateCustomToolIds.includes(id)
-            ? `Tool ID "${id}" is duplicated.`
-            : null,
-      label: label.length === 0 ? "Display label is required." : null,
-      command: command.length === 0 ? "Command is required." : null,
-      provenanceLinks:
-        invalidLinks.length > 0
-          ? `Invalid URL${invalidLinks.length > 1 ? "s" : ""}: ${invalidLinks.join(", ")}`
-          : null,
-    };
-  });
+  const customToolValidation = toolsConfig.custom.map((tool) =>
+    buildCustomToolValidation(tool, duplicateCustomToolIds)
+  );
 
   const parsedCustomToolArgs = toolsConfig.custom.map((_, index) =>
     parseQuotedArgInput(customToolArgsInput[index] ?? "")
   );
 
-  const hasBlockingValidationError =
-    duplicateToolNames.length > 0 ||
-    parsedCustomToolArgs.some((parsedArgs) => parsedArgs.error !== null) ||
-    customToolValidation.some((validation) =>
-      [validation.id, validation.label, validation.command].some((message) => message !== null)
-    );
+  const totalValidationIssueCount =
+    duplicateToolNames.length +
+    parsedCustomToolArgs.filter((parsedArgs) => parsedArgs.error !== null).length +
+    customToolValidation.reduce((count, validation) => count + validation.blockingErrors.length, 0);
+
+  const hasBlockingValidationError = totalValidationIssueCount > 0;
 
   const save = useCallback(async () => {
     if (!api?.config?.updateToolsConfig) {
@@ -355,10 +397,31 @@ export function ToolsSettingsSection() {
         mode: toolsConfig.defaults.mode,
         toolNames: parsedToolNames,
       },
-      custom: toolsConfig.custom.map((tool, index) => ({
-        ...tool,
-        args: parsedCustomToolArgs[index]?.args ?? [],
-      })),
+      custom: toolsConfig.custom.map((tool, index) => {
+        const trimmedProvenancePackage = tool.provenance?.package?.trim() ?? "";
+        const trimmedProvenanceLinks =
+          tool.provenance?.links?.map((link) => link.trim()).filter((link) => link.length > 0) ??
+          [];
+
+        const trimmedInstructions = tool.instructions?.trim() ?? "";
+
+        return {
+          ...tool,
+          id: tool.id.trim(),
+          label: tool.label.trim(),
+          command: tool.command.trim(),
+          args: parsedCustomToolArgs[index]?.args ?? [],
+          instructions: trimmedInstructions.length > 0 ? trimmedInstructions : undefined,
+          provenance:
+            trimmedProvenancePackage.length > 0 || trimmedProvenanceLinks.length > 0
+              ? {
+                  package:
+                    trimmedProvenancePackage.length > 0 ? trimmedProvenancePackage : undefined,
+                  links: trimmedProvenanceLinks,
+                }
+              : undefined,
+        };
+      }),
     };
 
     setSaving(true);
@@ -375,13 +438,14 @@ export function ToolsSettingsSection() {
   return (
     <div className="space-y-6">
       <div className="border-border-medium bg-background-secondary space-y-2 rounded-md border p-4">
-        <h3 className="text-foreground text-sm font-medium">Tool access and registration</h3>
-        <p className="text-muted text-xs">
-          Configure global tool defaults and custom tools stored in <code>~/.mux/config.json</code>.
+        <h3 className="text-foreground text-sm font-medium">Tool access and custom tools</h3>
+        <p className="text-muted text-xs leading-relaxed">
+          Configure global tool defaults and command-backed custom tools stored in{" "}
+          <code>~/.mux/config.json</code>.
         </p>
-        <ul className="text-muted list-disc space-y-1 pl-4 text-xs">
+        <ul className="text-muted list-disc space-y-1 pl-4 text-xs leading-relaxed">
           <li>Global defaults control baseline tool access for all agents.</li>
-          <li>Custom tools define reusable commands exposed as tool calls via MCP stdio.</li>
+          <li>Custom tools register reusable MCP stdio commands by tool ID.</li>
         </ul>
       </div>
 
@@ -425,8 +489,8 @@ export function ToolsSettingsSection() {
             aria-invalid={duplicateToolNames.length > 0}
           />
           <p className="text-muted mt-1 text-xs">
-            Use exact tool names. This list is interpreted by the selected mode as allowlist or
-            denylist.
+            Use exact tool names. This list is interpreted by the selected mode as an allowlist or
+            blocklist.
           </p>
           {duplicateToolNames.length > 0 ? (
             <p className="text-error mt-1 text-xs">
@@ -454,8 +518,9 @@ export function ToolsSettingsSection() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-foreground text-sm font-medium">Custom tools</h3>
-            <p className="text-muted mt-1 text-xs">
-              Add command-backed tools that agents can call by ID when enabled.
+            <p className="text-muted mt-1 text-xs leading-relaxed">
+              Add command-backed tools that agents can call by ID when enabled. Each custom tool
+              requires a unique Tool ID, label, and command.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={addCustomTool}>
@@ -464,6 +529,20 @@ export function ToolsSettingsSection() {
           </Button>
         </div>
 
+        <div className="border-border-medium bg-background rounded-md border px-3 py-2">
+          {hasBlockingValidationError ? (
+            <p className="text-error text-xs">
+              {getValidationSummaryLabel(totalValidationIssueCount)}. Resolve all issues before
+              saving.
+            </p>
+          ) : (
+            <p className="text-muted text-xs">
+              {getValidationSummaryLabel(totalValidationIssueCount)}. Required fields are marked
+              with
+              <span className="text-foreground ml-0.5">*</span>.
+            </p>
+          )}
+        </div>
         {toolsConfig.custom.length === 0 ? (
           <p className="text-muted rounded-md border border-dashed px-3 py-2 text-sm">
             No custom tools configured.
@@ -471,22 +550,45 @@ export function ToolsSettingsSection() {
         ) : (
           <div className="space-y-3">
             {toolsConfig.custom.map((tool, index) => {
-              const fieldErrors = customToolValidation[index];
+              const validation = customToolValidation[index];
+              const fieldErrors = validation.fieldErrors;
+              const argsValidation = parsedCustomToolArgs[index] ?? { args: [], error: null };
               const linksInputValue = (tool.provenance?.links ?? []).join(", ");
+              const blockingIssueCount =
+                validation.blockingErrors.length + (argsValidation.error ? 1 : 0);
+              const warningCount = validation.warnings.length;
 
               return (
                 <div
-                  key={`${index}-${tool.id}`}
-                  className="border-border-medium bg-background space-y-3 rounded-md border p-3"
+                  // Keep row keys stable while editing IDs so inputs preserve focus/cursor state.
+                  key={`custom-tool-row-${index}`}
+                  className={cn(
+                    "bg-background space-y-3 rounded-md border p-3",
+                    blockingIssueCount > 0
+                      ? "border-error/40"
+                      : warningCount > 0
+                        ? "border-warning/40"
+                        : "border-border-medium"
+                  )}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
                       <p className="text-foreground text-sm font-medium">
                         {tool.label.trim() || `Custom tool ${index + 1}`}
                       </p>
-                      <p className="text-muted mt-0.5 text-xs">
+                      <p className="text-muted text-xs">
                         ID: <code>{tool.id.trim() || "(not set)"}</code>
                       </p>
+                      {blockingIssueCount > 0 ? (
+                        <p className="text-error text-xs">
+                          {blockingIssueCount} required field{blockingIssueCount === 1 ? "" : "s"}{" "}
+                          still need attention.
+                        </p>
+                      ) : warningCount > 0 ? (
+                        <p className="text-warning text-xs">
+                          {warningCount} optional warning{warningCount === 1 ? "" : "s"}.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <span
@@ -504,7 +606,13 @@ export function ToolsSettingsSection() {
                         }
                         aria-label={`Toggle custom tool ${index + 1}`}
                       />
-                      <Button variant="ghost" size="icon" onClick={() => removeCustomTool(index)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeCustomTool(index)}
+                        aria-label={`Remove custom tool ${index + 1}`}
+                        title="Remove custom tool"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -521,7 +629,10 @@ export function ToolsSettingsSection() {
                         placeholder="weather_lookup"
                         aria-invalid={fieldErrors.id !== null}
                       />
-                      <p className="text-muted mt-1 text-xs">Used in prompts and tool routing.</p>
+                      <p className="text-muted mt-1 text-xs">
+                        Used in prompts and tool routing. Prefer lowercase with <code>-</code> or
+                        <code>_</code>.
+                      </p>
                       <FieldError message={fieldErrors.id} />
                     </div>
 
@@ -585,17 +696,29 @@ export function ToolsSettingsSection() {
                         });
                       }}
                       placeholder='server.py --mode "safe sandbox"'
-                      aria-invalid={parsedCustomToolArgs[index]?.error !== null}
+                      aria-invalid={argsValidation.error !== null}
                     />
-                    <p className="text-muted mt-1 text-xs">
-                      Use quotes for arguments with spaces. Example:{" "}
+                    <p className="text-muted mt-1 text-xs leading-relaxed">
+                      Use quotes for values with spaces, for example{" "}
                       <code>&quot;s3://my bucket&quot;</code>. Backslashes escape spaces and quotes.
                     </p>
-                    <FieldError message={parsedCustomToolArgs[index]?.error ?? null} />
-                    {(parsedCustomToolArgs[index]?.args.length ?? 0) > 0 ? (
-                      <p className="text-muted mt-1 text-xs">
-                        Parsed args: {parsedCustomToolArgs[index]?.args.join(" | ")}
-                      </p>
+                    <FieldError message={argsValidation.error} />
+                    {argsValidation.args.length > 0 ? (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-muted text-xs">
+                          Parsed args ({argsValidation.args.length})
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {argsValidation.args.map((arg, argIndex) => (
+                            <span
+                              key={`custom-tool-arg-${index}-${argIndex}`}
+                              className="border-border-medium bg-background-secondary rounded px-1.5 py-0.5 text-[11px]"
+                            >
+                              {arg.length > 0 ? arg : "(empty)"}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     ) : null}
                   </div>
 
@@ -675,7 +798,10 @@ export function ToolsSettingsSection() {
           Reload from disk
         </Button>
         {hasBlockingValidationError ? (
-          <p className="text-error text-xs">Resolve validation issues before saving.</p>
+          <p className="text-error text-xs">
+            {getValidationSummaryLabel(totalValidationIssueCount)}. Resolve all issues before
+            saving.
+          </p>
         ) : (
           <p className="text-muted text-xs">
             Changes are saved globally and apply to all workspaces.
