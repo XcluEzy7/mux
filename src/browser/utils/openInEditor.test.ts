@@ -261,6 +261,56 @@ describe("openInEditor", () => {
     expect(openSettingsCalls).toEqual(["general"]);
   });
 
+  test("does not fall back to generic ssh host when production tailscale detection fails", async () => {
+    const calls: OpenCall[] = [];
+    const openSettingsCalls: string[] = [];
+
+    const api = {
+      server: {
+        getTailscaleSsh: () =>
+          Promise.resolve({
+            enabled: true,
+            sshHost: "devbox.tailnet.ts.net",
+            proxyCommand: true,
+          }),
+        detectTailscale: () => Promise.reject(new Error("tailscale unavailable")),
+        getSshHost: () => Promise.resolve("fallback-host"),
+      },
+    } as unknown as APIClient;
+
+    const result = await withNodeEnv("production", () =>
+      withWindow(
+        createMockWindow(calls, {
+          hostname: "mux.remote.example",
+          editorConfig: { editor: "zed" },
+          experiments: {
+            [getExperimentKey(EXPERIMENT_IDS.TAILSCALE_SSH)]: true,
+          },
+        }),
+        () =>
+          openInEditor({
+            api,
+            openSettings: (section) => {
+              if (section) {
+                openSettingsCalls.push(section);
+              }
+            },
+            workspaceId,
+            targetPath: filePath,
+            isFile: true,
+          })
+      )
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+    });
+    expect(calls).toEqual([]);
+    expect(openSettingsCalls).toEqual(["general"]);
+  });
+
   test("uses the remote Tailscale username for zed browser deep links", async () => {
     const calls: OpenCall[] = [];
 

@@ -255,14 +255,30 @@ export async function openInEditor(args: {
         try {
           const tailscaleConfig = await args.api?.server.getTailscaleSsh();
           if (tailscaleConfig?.enabled && tailscaleConfig.sshHost) {
-            const detectedInfo =
-              tailscaleConfig.username == null
-                ? await args.api?.server.detectTailscale({ force: false })
-                : null;
+            const isDevelopment = isDevelopmentMode();
+            let detectedInfo: Awaited<
+              ReturnType<NonNullable<typeof args.api>["server"]["detectTailscale"]>
+            > | null = null;
+            if (tailscaleConfig.username == null) {
+              try {
+                detectedInfo = await args.api?.server.detectTailscale({ force: false });
+              } catch {
+                // In production, detection failures must not bypass the remote-user requirement.
+                if (!isDevelopment) {
+                  args.openSettings?.("general");
+                  return {
+                    success: false,
+                    error:
+                      "Configure a Remote User in Settings > General > Tailscale SSH before using Open in editor.",
+                  };
+                }
+              }
+            }
+
             const tailscaleUsername = resolveTailscaleSshUsername({
               configuredUsername: tailscaleConfig.username,
               detectedUsername: detectedInfo?.username,
-              isDevelopment: isDevelopmentMode(),
+              isDevelopment,
             });
 
             // In production, require explicit settings to avoid silently using the
