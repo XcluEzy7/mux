@@ -59,6 +59,7 @@ describe("WorkspaceLinks", () => {
     spyOn(SendOptionsModule, "getSendOptionsFromStorage").mockImplementation(
       (): ReturnType<typeof SendOptionsModule.getSendOptionsFromStorage> => ({
         model: "openai:gpt-5",
+        agentId: "general-purpose",
       })
     );
     spyOn(PRLinkBadgeModule, "PRLinkBadge").mockImplementation(((
@@ -94,7 +95,7 @@ describe("WorkspaceLinks", () => {
       client: mockAPI,
       sourceWorkspaceId: "ws-1",
       startMessage: "Fix this pull request",
-      sendMessageOptions: { model: "openai:gpt-5" },
+      sendMessageOptions: { model: "openai:gpt-5", agentId: "general-purpose" },
     });
   });
 
