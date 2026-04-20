@@ -45,6 +45,13 @@ function parseCommaSeparatedValues(input: string): string[] {
     .filter((value) => value.length > 0);
 }
 
+export function parseMultilineValues(input: string): string[] {
+  return input
+    .split("\n")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 export interface ParsedArgInput {
   args: string[];
   error: string | null;
@@ -201,7 +208,8 @@ function buildCustomToolValidation(
   const label = tool.label.trim();
   const command = tool.command.trim();
 
-  const links = (tool.provenance?.links ?? []).filter((link) => link.trim().length > 0);
+  const links =
+    tool.provenance?.links?.map((link) => link.trim()).filter((link) => link.length > 0) ?? [];
   const invalidLinks = links.filter((link) => !isValidUrl(link));
 
   let idError: string | null = null;
@@ -512,9 +520,9 @@ export function ToolsSettingsSection() {
           ) : null}
           {parsedToolNames.length > 0 ? (
             <div className="mt-2 flex flex-wrap gap-1">
-              {parsedToolNames.map((toolName) => (
+              {parsedToolNames.map((toolName, toolNameIndex) => (
                 <span
-                  key={`default-tool-${toolName}`}
+                  key={`default-tool-${toolName}-${toolNameIndex}`}
                   className="border-border-medium bg-background rounded px-1.5 py-0.5 text-[11px]"
                 >
                   {toolName}
@@ -566,7 +574,7 @@ export function ToolsSettingsSection() {
               const validation = customToolValidation[index];
               const fieldErrors = validation.fieldErrors;
               const argsValidation = parsedCustomToolArgs[index] ?? { args: [], error: null };
-              const linksInputValue = (tool.provenance?.links ?? []).join(", ");
+              const linksInputValue = (tool.provenance?.links ?? []).join("\n");
               const blockingIssueCount =
                 validation.blockingErrors.length + (argsValidation.error ? 1 : 0);
               const warningCount = validation.warnings.length;
@@ -792,21 +800,25 @@ export function ToolsSettingsSection() {
 
                     <div>
                       <FieldLabel htmlFor={toolProvenanceLinksInputId}>
-                        Provenance links (comma-separated)
+                        Provenance links (one per line)
                       </FieldLabel>
-                      <Input
+                      <textarea
                         id={toolProvenanceLinksInputId}
                         value={linksInputValue}
-                        onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                        onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>
                           updateCustomTool(index, (prev) => ({
                             ...prev,
                             provenance: {
                               ...(prev.provenance ?? {}),
-                              links: parseCommaSeparatedValues(event.target.value),
+                              links: parseMultilineValues(event.target.value),
                             },
                           }))
                         }
-                        placeholder="https://github.com/acme/weather-tool"
+                        placeholder={
+                          "https://github.com/acme/weather-tool\nhttps://docs.acme.dev/tool"
+                        }
+                        rows={3}
+                        className={TEXTAREA_INPUT_CLASS}
                       />
                       {fieldErrors.provenanceLinks ? (
                         <p className="text-error mt-1 text-xs">{fieldErrors.provenanceLinks}</p>

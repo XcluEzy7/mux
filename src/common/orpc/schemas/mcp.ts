@@ -63,6 +63,7 @@ export const MCPServerMapSchema = z.record(z.string(), MCPServerInfoSchema);
 
 export const MCPListParamsSchema = z.object({
   projectPath: z.string().optional(),
+  includeSyntheticCustomToolServers: z.boolean().optional(),
 });
 
 const MCPAddParamsBaseSchema = z.object({

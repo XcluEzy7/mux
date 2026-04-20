@@ -2155,7 +2155,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const servers = await context.mcpConfigService.listServers(
             input.projectPath,
-            isTrustedProjectPath(context, input.projectPath)
+            isTrustedProjectPath(context, input.projectPath),
+            input.includeSyntheticCustomToolServers ?? true
           );
 
           if (!context.policyService.isEnforced()) {

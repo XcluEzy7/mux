@@ -268,26 +268,36 @@ export class MCPConfigService {
    * - When projectPath is provided and trusted=false: returns only global servers
    * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
    */
-  async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
+  async listServers(
+    projectPath?: string,
+    trusted = false,
+    includeSyntheticCustomToolServers = true
+  ): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
 
     if (!projectPath) {
-      return this.mergeCustomToolServers(globalCfg.servers);
+      return includeSyntheticCustomToolServers
+        ? this.mergeCustomToolServers(globalCfg.servers)
+        : globalCfg.servers;
     }
 
     if (!trusted) {
       log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return this.mergeCustomToolServers(globalCfg.servers);
+      return includeSyntheticCustomToolServers
+        ? this.mergeCustomToolServers(globalCfg.servers)
+        : globalCfg.servers;
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
 
     // Repo overrides win by server name. Synthetic custom-tool servers should never
     // overwrite explicit user/server entries with the same name.
-    return this.mergeCustomToolServers({
+    const merged = {
       ...globalCfg.servers,
       ...repoCfg.servers,
-    });
+    };
+
+    return includeSyntheticCustomToolServers ? this.mergeCustomToolServers(merged) : merged;
   }
 
   async addServer(

@@ -100,6 +100,37 @@ describe("MCPConfigService", () => {
     expect(servers["custom-tool:disabled"]).toBeUndefined();
   });
 
+  test("listServers can omit synthetic custom-tool servers for settings editing", async () => {
+    await config.editConfig((cfg) => {
+      cfg.tools = {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "echo",
+            label: "Echo",
+            command: "npx",
+            args: ["@acme/echo"],
+            enabled: true,
+          },
+        ],
+      };
+      return cfg;
+    });
+
+    await configService.addServer("custom-tool:echo", {
+      transport: "stdio",
+      command: "user-defined-server",
+    });
+
+    const servers = await configService.listServers(undefined, false, false);
+
+    expect(servers["custom-tool:echo"]).toEqual({
+      transport: "stdio",
+      command: "user-defined-server",
+      disabled: false,
+    });
+  });
+
   test("listServers does not let synthetic custom-tool servers overwrite explicit servers", async () => {
     await configService.addServer("custom-tool:echo", {
       transport: "stdio",
