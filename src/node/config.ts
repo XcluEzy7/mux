@@ -635,6 +635,10 @@ export class Config {
           }
 
           if (this.pendingSelfWriteSignature !== null && changedFileSignature === null) {
+            // Consume at most one null-signature event while we are waiting for our
+            // own write notification. If the write event is coalesced/missed, this
+            // prevents stale state from suppressing future external delete/rename events.
+            this.pendingSelfWriteSignature = null;
             return;
           }
 

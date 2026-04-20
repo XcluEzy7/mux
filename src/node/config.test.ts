@@ -1054,6 +1054,51 @@ describe("Config", () => {
     }
   });
 
+  it("consumes stale pending self-write state after a null-signature event", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      fs.rmSync(configFile, { force: true });
+
+      // First null-signature event is consumed while pending self-write is still set.
+      watchCallback?.("rename", path.basename(configFile));
+      expect(notifications).toBe(0);
+
+      // A subsequent null-signature event should no longer be suppressed.
+      watchCallback?.("rename", path.basename(configFile));
+      expect(notifications).toBe(1);
+
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
   it("does not ignore external null-signature events when a save happened before watcher start", async () => {
     const configFile = path.join(tempDir, "config.json");
     fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
