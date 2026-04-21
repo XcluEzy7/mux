@@ -116,6 +116,7 @@ export class PRStatusStore {
   private client: RouterClient<AppRouter> | null = null;
   private readonly refreshController: RefreshController;
   private isActive = true;
+  private readonly feedRefreshInFlight = new Set<string>();
 
   // Workspace-based PR detection (keyed by workspaceId)
   private workspacePRSubscriptions = new MapStore<string, WorkspacePRCacheEntry>();
@@ -435,7 +436,8 @@ export class PRStatusStore {
   }
 
   private async detectWorkspaceFeed(workspaceId: string): Promise<void> {
-    if (!this.client || !this.isActive) return;
+    if (!this.client || !this.isActive || this.feedRefreshInFlight.has(workspaceId)) return;
+    this.feedRefreshInFlight.add(workspaceId);
 
     try {
       const result = await this.client.workspace.getPullRequestFeed({ workspaceId });
@@ -448,6 +450,8 @@ export class PRStatusStore {
       this.workspacePRFeedSubscriptions.bump(workspaceId);
     } catch {
       // Keep the previous detailed feed visible if the enrichment refresh fails.
+    } finally {
+      this.feedRefreshInFlight.delete(workspaceId);
     }
   }
 
@@ -498,7 +502,14 @@ export class PRStatusStore {
     return now - entry.fetchedAt > STATUS_CACHE_TTL_MS;
   }
 
-  private shouldFetchWorkspaceFeed(entry: WorkspacePRCacheEntry | undefined, now: number): boolean {
+  private shouldFetchWorkspaceFeed(
+    workspaceId: string,
+    entry: WorkspacePRCacheEntry | undefined,
+    now: number
+  ): boolean {
+    if (this.feedRefreshInFlight.has(workspaceId)) {
+      return false;
+    }
     if (!entry?.feed) return true;
     return now - entry.feed.fetchedAt > STATUS_CACHE_TTL_MS;
   }
@@ -527,7 +538,8 @@ export class PRStatusStore {
       const cached = this.workspacePRCache.get(workspaceId);
       const statusSubscribed = this.workspaceSubscriptionCounts.has(workspaceId);
       const feedSubscribed = this.workspaceFeedSubscriptionCounts.has(workspaceId);
-      const needsFeedRefresh = feedSubscribed && this.shouldFetchWorkspaceFeed(cached, now);
+      const needsFeedRefresh =
+        feedSubscribed && this.shouldFetchWorkspaceFeed(workspaceId, cached, now);
       const needsStatusRefresh =
         statusSubscribed && !needsFeedRefresh && this.shouldFetchWorkspace(cached, now);
 
@@ -578,6 +590,7 @@ export class PRStatusStore {
    */
   dispose(): void {
     this.isActive = false;
+    this.feedRefreshInFlight.clear();
     for (const unsubscribe of this.runtimeRetryUnsubscribers.values()) {
       unsubscribe();
     }

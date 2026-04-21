@@ -407,6 +407,52 @@ describe("PR feed caching", () => {
     }
   });
 
+  it("skips duplicate feed fetches while a prior refresh is still in flight", async () => {
+    const workspaceId = "ws-feed-in-flight";
+    const feed = makeFeed(workspaceId);
+    let resolveFeedRequest: ((value: { success: true; data: WorkspacePullRequestFeed }) => void) | null =
+      null;
+    const getPullRequestFeed = mock(
+      () =>
+        new Promise<{ success: true; data: WorkspacePullRequestFeed }>((resolve) => {
+          resolveFeedRequest = resolve;
+        })
+    );
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestFeed,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+
+      const refreshFeed = (store as unknown as {
+        detectWorkspaceFeed: (id: string) => Promise<void>;
+      }).detectWorkspaceFeed.bind(store);
+
+      const firstRefresh = refreshFeed(workspaceId);
+      const secondRefresh = refreshFeed(workspaceId);
+
+      expect(getPullRequestFeed.mock.calls.length).toBe(1);
+
+      resolveFeedRequest?.({ success: true, data: feed });
+      await firstRefresh;
+      await secondRefresh;
+
+      expect(store.getWorkspacePRFeed(workspaceId)).toEqual(feed);
+      expect(getPullRequestFeed.mock.calls.length).toBe(1);
+    } finally {
+      store.dispose();
+    }
+  });
+
   it("refreshes multiple subscribed workspaces independently for status-only updates", async () => {
     const workspaceA = "ws-feed-a";
     const workspaceB = "ws-feed-b";

@@ -4618,7 +4618,7 @@ export class WorkspaceService extends EventEmitter {
 
   private async getPullRequestViewRecord(
     normalizedWorkspaceId: string,
-    workspaceMetadata: WorkspaceMetadata
+    repoRootProjectPath: string
   ): Promise<Result<Record<string, unknown>>> {
     try {
       const viewResult = await this.executeBash(
@@ -4626,7 +4626,7 @@ export class WorkspaceService extends EventEmitter {
         `gh pr view --json ${GH_PR_VIEW_JSON_FIELDS} 2>/dev/null || echo '{"no_pr":true}'`,
         {
           cwdMode: "repo-root",
-          repoRootProjectPath: workspaceMetadata.projectPath,
+          repoRootProjectPath,
           timeout_secs: 15,
           // gh requires the runtime environment — devcontainer auth/CLI
           // may only exist inside the container.
@@ -4685,6 +4685,7 @@ export class WorkspaceService extends EventEmitter {
     normalizedWorkspaceId: string,
     workspaceMetadata: WorkspaceMetadata
   ): Promise<Result<WorkspacePullRequestFeed>> {
+    const repoRootProjectPath = workspaceMetadata.projectPath;
     const fetchedAt = Date.now();
     const baseResponse: Omit<
       WorkspacePullRequestFeed,
@@ -4699,10 +4700,7 @@ export class WorkspaceService extends EventEmitter {
     };
 
     try {
-      const viewRecordResult = await this.getPullRequestViewRecord(
-        normalizedWorkspaceId,
-        workspaceMetadata
-      );
+      const viewRecordResult = await this.getPullRequestViewRecord(normalizedWorkspaceId, repoRootProjectPath);
       if (!viewRecordResult.success) {
         return Err(viewRecordResult.error);
       }
@@ -4738,15 +4736,15 @@ export class WorkspaceService extends EventEmitter {
         normalizedWorkspaceId,
         [
           "gh api graphql",
-          `-f query='${MERGE_QUEUE_AND_THREADS_QUERY}'`,
-          `-f owner='${prLink.owner}'`,
-          `-f repo='${prLink.repo}'`,
+          `-f query=${shellQuote(MERGE_QUEUE_AND_THREADS_QUERY)}`,
+          `-f owner=${shellQuote(prLink.owner)}`,
+          `-f repo=${shellQuote(prLink.repo)}`,
           `-F number=${prLink.number}`,
           "2>/dev/null",
         ].join(" "),
         {
           cwdMode: "repo-root",
-          repoRootProjectPath: workspaceMetadata.projectPath,
+          repoRootProjectPath,
           timeout_secs: 2,
           // gh requires the runtime environment — devcontainer auth/CLI
           // may only exist inside the container.
@@ -4816,18 +4814,18 @@ export class WorkspaceService extends EventEmitter {
     }
 
     try {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const workspaceMetadata = allMetadata.find(
-        (metadata) => metadata.id === normalizedWorkspaceId
-      );
-      if (!workspaceMetadata) {
+      const persistedWorkspace = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!persistedWorkspace) {
         return Err(`Workspace not found: ${normalizedWorkspaceId}`);
       }
 
+      // Avoid re-reading/parsing the full workspace metadata list for every sidebar PR status poll.
+      const repoRootProjectPath =
+        persistedWorkspace.attributionProjectPath ?? persistedWorkspace.projectPath;
       const fetchedAt = Date.now();
       const viewRecordResult = await this.getPullRequestViewRecord(
         normalizedWorkspaceId,
-        workspaceMetadata
+        repoRootProjectPath
       );
       if (!viewRecordResult.success) {
         return Err(viewRecordResult.error);

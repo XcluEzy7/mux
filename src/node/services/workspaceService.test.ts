@@ -2708,40 +2708,65 @@ describe("WorkspaceService getPullRequestFeed", () => {
   ): {
     workspaceService: WorkspaceService;
     executeBashMock: ReturnType<typeof mock>;
+    findWorkspaceMock: ReturnType<typeof mock>;
+    getAllWorkspaceMetadataMock: ReturnType<typeof mock>;
   } {
+    const workspaceMetadata = [
+      {
+        id: "ws-no-pr",
+        name: "ws-no-pr",
+        projectName: "project",
+        projectPath: "/tmp/project",
+        namedWorkspacePath: "/tmp/project/workspaces/ws-no-pr",
+        runtimeConfig: { type: "local" as const },
+      },
+      {
+        id: "ws-pr",
+        name: "ws-pr",
+        projectName: "project",
+        projectPath: "/tmp/project",
+        namedWorkspacePath: "/tmp/project/workspaces/ws-pr",
+        runtimeConfig: { type: "local" as const },
+      },
+      {
+        id: "ws-invalid-url",
+        name: "ws-invalid-url",
+        projectName: "project",
+        projectPath: "/tmp/project",
+        namedWorkspacePath: "/tmp/project/workspaces/ws-invalid-url",
+        runtimeConfig: { type: "local" as const },
+      },
+    ] satisfies FrontendWorkspaceMetadata[];
+    const getAllWorkspaceMetadataMock = mock(() => Promise.resolve(workspaceMetadata));
+    const findWorkspaceMock = mock((workspaceId: string) => {
+      if (workspaceId === "ws-no-pr") {
+        return {
+          workspacePath: "/tmp/project/workspaces/ws-no-pr",
+          projectPath: "/tmp/project",
+        };
+      }
+      if (workspaceId === "ws-pr") {
+        return {
+          workspacePath: "/tmp/project/workspaces/ws-pr",
+          projectPath: "/tmp/_multi",
+          attributionProjectPath: "/tmp/project",
+        };
+      }
+      if (workspaceId === "ws-invalid-url") {
+        return {
+          workspacePath: "/tmp/project/workspaces/ws-invalid-url",
+          projectPath: "/tmp/project",
+        };
+      }
+      return null;
+    });
+
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: mock(() => "test-id"),
-      findWorkspace: mock(() => null),
-      getAllWorkspaceMetadata: mock(() =>
-        Promise.resolve([
-          {
-            id: "ws-no-pr",
-            name: "ws-no-pr",
-            projectName: "project",
-            projectPath: "/tmp/project",
-            namedWorkspacePath: "/tmp/project/workspaces/ws-no-pr",
-            runtimeConfig: { type: "local" as const },
-          },
-          {
-            id: "ws-pr",
-            name: "ws-pr",
-            projectName: "project",
-            projectPath: "/tmp/project",
-            namedWorkspacePath: "/tmp/project/workspaces/ws-pr",
-            runtimeConfig: { type: "local" as const },
-          },
-          {
-            id: "ws-invalid-url",
-            name: "ws-invalid-url",
-            projectName: "project",
-            projectPath: "/tmp/project",
-            namedWorkspacePath: "/tmp/project/workspaces/ws-invalid-url",
-            runtimeConfig: { type: "local" as const },
-          },
-        ])
-      ),
+      findWorkspace: findWorkspaceMock,
+      getAllWorkspaceMetadata: getAllWorkspaceMetadataMock,
     };
 
     const aiService: AIService = {
@@ -2771,7 +2796,7 @@ describe("WorkspaceService getPullRequestFeed", () => {
     const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
     svc.executeBash = executeBashMock;
 
-    return { workspaceService, executeBashMock };
+    return { workspaceService, executeBashMock, findWorkspaceMock, getAllWorkspaceMetadataMock };
   }
 
   test("returns null PR feed when branch has no PR", async () => {
@@ -2913,8 +2938,10 @@ describe("WorkspaceService getPullRequestFeed", () => {
   });
 
   test("returns lightweight PR status without GraphQL enrichment", async () => {
-    const { workspaceService, executeBashMock } = createServiceHarness((workspaceId, script) => {
+    const { workspaceService, executeBashMock, findWorkspaceMock, getAllWorkspaceMetadataMock } =
+      createServiceHarness((workspaceId, script, options) => {
       if (script.includes("gh pr view --json")) {
+        expect(options?.repoRootProjectPath).toBe("/tmp/project");
         return Promise.resolve(
           bashOk(
             JSON.stringify({
@@ -2933,8 +2960,8 @@ describe("WorkspaceService getPullRequestFeed", () => {
         );
       }
 
-      throw new Error(`Unexpected executeBash script: ${script}`);
-    });
+        throw new Error(`Unexpected executeBash script: ${script}`);
+      });
 
     const result = await workspaceService.getPullRequestStatus("ws-pr");
 
@@ -2946,6 +2973,8 @@ describe("WorkspaceService getPullRequestFeed", () => {
     expect(result.data?.url).toBe("https://github.com/example/repo/pull/42");
     expect(result.data?.status?.title).toBe("PR for ws-pr");
     expect(executeBashMock).toHaveBeenCalledTimes(1);
+    expect(findWorkspaceMock).toHaveBeenCalledWith("ws-pr");
+    expect(getAllWorkspaceMetadataMock).not.toHaveBeenCalled();
   });
 });
 
