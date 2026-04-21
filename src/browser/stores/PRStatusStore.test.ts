@@ -407,6 +407,56 @@ describe("PR feed caching", () => {
     }
   });
 
+  it("preserves the freshest feed when a status refresh resolves after a feed refresh", async () => {
+    const workspaceId = "ws-feed-race";
+    const feed = makeFeed(workspaceId);
+    let resolveStatusRequest:
+      | ((value: { success: true; data: WorkspacePullRequestFeed["pr"] }) => void)
+      | null = null;
+    const getPullRequestStatus = mock(
+      () =>
+        new Promise<{ success: true; data: WorkspacePullRequestFeed["pr"] }>((resolve) => {
+          resolveStatusRequest = resolve;
+        })
+    );
+    const getPullRequestFeed = mock(() => Promise.resolve({ success: true as const, data: feed }));
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestStatus,
+          getPullRequestFeed,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+
+      const refreshStatus = (store as unknown as {
+        detectWorkspacePR: (id: string) => Promise<void>;
+      }).detectWorkspacePR.bind(store);
+      const refreshFeed = (store as unknown as {
+        detectWorkspaceFeed: (id: string) => Promise<void>;
+      }).detectWorkspaceFeed.bind(store);
+
+      const statusRefresh = refreshStatus(workspaceId);
+      await refreshFeed(workspaceId);
+
+      expect(store.getWorkspacePRFeed(workspaceId)).toEqual(feed);
+
+      resolveStatusRequest?.({ success: true, data: feed.pr });
+      await statusRefresh;
+
+      expect(store.getWorkspacePRFeed(workspaceId)).toEqual(feed);
+    } finally {
+      store.dispose();
+    }
+  });
+
   it("skips duplicate feed fetches while a prior refresh is still in flight", async () => {
     const workspaceId = "ws-feed-in-flight";
     const feed = makeFeed(workspaceId);
@@ -448,6 +498,58 @@ describe("PR feed caching", () => {
 
       expect(store.getWorkspacePRFeed(workspaceId)).toEqual(feed);
       expect(getPullRequestFeed.mock.calls.length).toBe(1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("does not start a status refresh while feed refresh is already in flight", async () => {
+    const workspaceId = "ws-feed-blocks-status";
+    const feed = makeFeed(workspaceId);
+    let resolveFeedRequest: ((value: { success: true; data: WorkspacePullRequestFeed }) => void) | null =
+      null;
+    const getPullRequestFeed = mock(
+      () =>
+        new Promise<{ success: true; data: WorkspacePullRequestFeed }>((resolve) => {
+          resolveFeedRequest = resolve;
+        })
+    );
+    const getPullRequestStatus = mock(() =>
+      Promise.resolve({ success: true as const, data: feed.pr })
+    );
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestFeed,
+          getPullRequestStatus,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+      await sleep(0);
+      store.subscribeWorkspace(workspaceId, () => undefined);
+      store.subscribeWorkspaceFeed(workspaceId, () => undefined);
+
+      const refreshFeed = (store as unknown as {
+        detectWorkspaceFeed: (id: string) => Promise<void>;
+      }).detectWorkspaceFeed.bind(store);
+      const refreshAll = (store as unknown as {
+        refreshAll: () => Promise<void>;
+      }).refreshAll.bind(store);
+
+      const feedRefresh = refreshFeed(workspaceId);
+      await refreshAll();
+
+      expect(getPullRequestStatus.mock.calls.length).toBe(0);
+
+      resolveFeedRequest?.({ success: true, data: feed });
+      await feedRefresh;
     } finally {
       store.dispose();
     }

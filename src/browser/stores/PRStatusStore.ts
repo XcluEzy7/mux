@@ -351,7 +351,7 @@ export class PRStatusStore {
   /**
    * Detect PR for workspace's current branch using a lightweight status-only endpoint.
    */
-  async detectWorkspacePR(workspaceId: string): Promise<void> {
+  private async detectWorkspacePR(workspaceId: string): Promise<void> {
     if (!this.client || !this.isActive) return;
     const existing = this.workspacePRCache.get(workspaceId);
     this.workspacePRCache.set(workspaceId, {
@@ -366,12 +366,13 @@ export class PRStatusStore {
     try {
       const result = await this.client.workspace.getPullRequestStatus({ workspaceId });
       if (!this.isActive) return;
+      const latestEntry = this.workspacePRCache.get(workspaceId);
 
       if (!result.success) {
         this.workspacePRCache.set(workspaceId, {
-          prLink: existing?.prLink ?? null,
-          status: existing?.status,
-          feed: existing?.feed,
+          prLink: latestEntry?.prLink ?? existing?.prLink ?? null,
+          status: latestEntry?.status ?? existing?.status,
+          feed: latestEntry?.feed ?? existing?.feed,
           error: result.error,
           loading: false,
           fetchedAt: Date.now(),
@@ -380,7 +381,7 @@ export class PRStatusStore {
         return;
       }
 
-      const previousFeed = existing?.feed;
+      const previousFeed = latestEntry?.feed ?? existing?.feed;
       const nextFeed =
         result.data == null
           ? previousFeed?.pr == null
@@ -422,11 +423,12 @@ export class PRStatusStore {
     } catch (err) {
       if (!this.isActive) return;
 
+      const latestEntry = this.workspacePRCache.get(workspaceId);
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       this.workspacePRCache.set(workspaceId, {
-        prLink: existing?.prLink ?? null,
-        status: existing?.status,
-        feed: existing?.feed,
+        prLink: latestEntry?.prLink ?? existing?.prLink ?? null,
+        status: latestEntry?.status ?? existing?.status,
+        feed: latestEntry?.feed ?? existing?.feed,
         error: errorMessage,
         loading: false,
         fetchedAt: Date.now(),
@@ -541,7 +543,10 @@ export class PRStatusStore {
       const needsFeedRefresh =
         feedSubscribed && this.shouldFetchWorkspaceFeed(workspaceId, cached, now);
       const needsStatusRefresh =
-        statusSubscribed && !needsFeedRefresh && this.shouldFetchWorkspace(cached, now);
+        statusSubscribed &&
+        !needsFeedRefresh &&
+        !this.feedRefreshInFlight.has(workspaceId) &&
+        this.shouldFetchWorkspace(cached, now);
 
       if (!needsFeedRefresh && !needsStatusRefresh) {
         continue;
