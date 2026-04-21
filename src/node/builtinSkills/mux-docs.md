@@ -108,6 +108,7 @@ Use this index to find a page's:
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
+    - Codebase cleanup plan (`/reference/codebase-cleanup-plan`) → `references/docs/reference/codebase-cleanup-plan.mdx` — Cleanup, dead-code audit, and performance plan for the mux codebase.
     - Future Build Improvements (`/reference/future-build-improvements`) → `references/docs/reference/future-build-improvements.mdx` — Validation notes and follow-up ideas for the local build and CLI install workflow.
     - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase
 <!-- END DOCS_TREE -->

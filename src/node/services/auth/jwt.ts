@@ -25,11 +25,7 @@ function getJwtSecret(): Buffer {
     return crypto.scryptSync(JWT_SECRET_ENV, "mux-jwt-salt", 32);
   }
   // Derive a consistent key from a fixed secret for development
-  return crypto.scryptSync(
-    "mux-dev-jwt-secret-do-not-use-in-production",
-    "mux-jwt-salt-v1",
-    32
-  );
+  return crypto.scryptSync("mux-dev-jwt-secret-do-not-use-in-production", "mux-jwt-salt-v1", 32);
 }
 
 function base64UrlEncode(data: Buffer | string): string {
@@ -159,7 +155,7 @@ export class JwtService implements JwtProvider {
 let jwtServiceInstance: JwtService | null = null;
 
 export function getJwtService(): JwtService {
-  return jwtServiceInstance ??= new JwtService();
+  return (jwtServiceInstance ??= new JwtService());
 }
 
 export type { JwtProvider } from "./types";
