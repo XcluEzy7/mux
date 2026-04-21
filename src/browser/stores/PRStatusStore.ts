@@ -242,6 +242,8 @@ export class PRStatusStore {
 
     if (
       existing?.url === cached.prLink.url &&
+      existing?.detectedAt === cached.prLink.detectedAt &&
+      existing?.occurrenceCount === cached.prLink.occurrenceCount &&
       existing?.status === cached.status &&
       existing?.loading === cached.loading &&
       existing?.error === cached.error
