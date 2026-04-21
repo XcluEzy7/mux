@@ -240,9 +240,22 @@ export class PRStatusStore {
       return null;
     }
 
+    const previousStatus = existing?.status;
+    const nextStatus = cached.status;
+    const statusUnchanged =
+      previousStatus === nextStatus ||
+      (previousStatus != null &&
+        nextStatus != null &&
+        previousStatus.state === nextStatus.state &&
+        previousStatus.mergeable === nextStatus.mergeable &&
+        previousStatus.mergeStateStatus === nextStatus.mergeStateStatus &&
+        previousStatus.hasPendingChecks === nextStatus.hasPendingChecks &&
+        previousStatus.hasFailedChecks === nextStatus.hasFailedChecks &&
+        previousStatus.isDraft === nextStatus.isDraft);
+
     if (
       existing?.url === cached.prLink.url &&
-      existing?.status === cached.status &&
+      statusUnchanged &&
       existing?.loading === cached.loading &&
       existing?.error === cached.error
     ) {
