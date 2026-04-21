@@ -4702,40 +4702,28 @@ export class WorkspaceService extends EventEmitter {
       let mergeQueueEntry: MergeQueueEntry | null = null;
       let threads: WorkspacePullRequestFeed["threads"] = [];
 
-      // Keep GraphQL enrichment best-effort and non-blocking for baseline PR feed responsiveness.
-      // If this query is slow or unavailable, return the primary `gh pr view` data immediately.
-      const graphqlResult = await Promise.race<Awaited<ReturnType<typeof this.executeBash>> | null>(
+      // Keep GraphQL enrichment best-effort with a bounded timeout so PR feed calls
+      // remain responsive without leaving orphaned subprocesses running.
+      const graphqlResult = await this.executeBash(
+        normalizedWorkspaceId,
         [
-          this.executeBash(
-            normalizedWorkspaceId,
-            [
-              "gh api graphql",
-              `-f query='${MERGE_QUEUE_AND_THREADS_QUERY}'`,
-              `-f owner='${prLink.owner}'`,
-              `-f repo='${prLink.repo}'`,
-              `-F number=${prLink.number}`,
-              "2>/dev/null",
-            ].join(" "),
-            {
-              cwdMode: "repo-root",
-              repoRootProjectPath: workspaceMetadata.projectPath,
-              timeout_secs: 10,
-              // gh requires the runtime environment — devcontainer auth/CLI
-              // may only exist inside the container.
-            }
-          ).catch(() => null),
-          new Promise<null>((resolve) => {
-            setTimeout(() => resolve(null), 500);
-          }),
-        ]
+          "gh api graphql",
+          `-f query='${MERGE_QUEUE_AND_THREADS_QUERY}'`,
+          `-f owner='${prLink.owner}'`,
+          `-f repo='${prLink.repo}'`,
+          `-F number=${prLink.number}`,
+          "2>/dev/null",
+        ].join(" "),
+        {
+          cwdMode: "repo-root",
+          repoRootProjectPath: workspaceMetadata.projectPath,
+          timeout_secs: 2,
+          // gh requires the runtime environment — devcontainer auth/CLI
+          // may only exist inside the container.
+        }
       );
 
-      if (
-        graphqlResult &&
-        graphqlResult.success &&
-        graphqlResult.data.success &&
-        graphqlResult.data.output
-      ) {
+      if (graphqlResult.success && graphqlResult.data.success && graphqlResult.data.output) {
         try {
           const graphQlPayload = JSON.parse(graphqlResult.data.output) as unknown;
           mergeQueueEntry = parseMergeQueueEntryFromGraphql(graphQlPayload);
