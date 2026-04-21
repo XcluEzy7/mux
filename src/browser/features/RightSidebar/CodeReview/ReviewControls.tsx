@@ -64,19 +64,19 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
-  const tutorial = useOptionalTutorial();
+  const startTutorialSequence = useOptionalTutorial()?.startSequence;
 
   // Show the immersive review tutorial the first time the review panel is visible.
   // This UI enhancement must never crash review controls during transient HMR/provider races.
   React.useEffect(() => {
-    if (!tutorial) {
+    if (!startTutorialSequence) {
       return;
     }
 
     // Small delay to ensure the button is rendered and measurable.
-    const timer = setTimeout(() => tutorial.startSequence("review"), 500);
+    const timer = setTimeout(() => startTutorialSequence("review"), 500);
     return () => clearTimeout(timer);
-  }, [tutorial]);
+  }, [startTutorialSequence]);
 
   // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {
