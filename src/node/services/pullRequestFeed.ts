@@ -152,15 +152,16 @@ export function normalizeReviewerIdentity(rawAuthor: unknown): PullRequestReview
     return null;
   }
 
+  const knownCategory = REVIEWER_CATEGORY_BY_BOT_LOGIN[login.toLowerCase()];
   const typename = getString(author.__typename);
   const inferredBot = typename === "Bot" || /\[bot\]$/i.test(login);
-  const explicitBot = getBoolean(author.is_bot);
-  const isBot = explicitBot ?? inferredBot;
+  const explicitBot = getBoolean(author.is_bot) === true;
+  const isBot = explicitBot || inferredBot || Boolean(knownCategory);
 
   return {
     login,
     isBot,
-    category: categorizeReviewer(login, isBot),
+    category: knownCategory ?? categorizeReviewer(login, isBot),
   };
 }
 
