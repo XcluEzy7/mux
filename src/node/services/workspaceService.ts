@@ -84,7 +84,7 @@ import type {
 
 import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
-import type { MergeQueueEntry } from "@/common/types/links";
+import type { GitHubPRLinkWithStatus, MergeQueueEntry } from "@/common/types/links";
 import type {
   FrontendWorkspaceMetadata,
   GitStatus,
@@ -4616,23 +4616,10 @@ export class WorkspaceService extends EventEmitter {
     return results;
   }
 
-  private async buildPullRequestFeed(
+  private async getPullRequestViewRecord(
     normalizedWorkspaceId: string,
     workspaceMetadata: WorkspaceMetadata
-  ): Promise<Result<WorkspacePullRequestFeed>> {
-    const fetchedAt = Date.now();
-    const baseResponse: Omit<
-      WorkspacePullRequestFeed,
-      "pr" | "reviewDecision" | "reviewers" | "threads"
-    > = {
-      workspaceId: normalizedWorkspaceId,
-      checksSummary: {
-        hasPendingChecks: false,
-        hasFailedChecks: false,
-      },
-      fetchedAt,
-    };
-
+  ): Promise<Result<Record<string, unknown>>> {
     try {
       const viewResult = await this.executeBash(
         normalizedWorkspaceId,
@@ -4664,8 +4651,69 @@ export class WorkspaceService extends EventEmitter {
         return Err("Unexpected gh output: not a JSON object");
       }
 
-      const viewRecord = parsed as Record<string, unknown>;
-      if ("no_pr" in viewRecord) {
+      return Ok(parsed as Record<string, unknown>);
+    } catch (error) {
+      return Err(getErrorMessage(error));
+    }
+  }
+
+  private buildPullRequestStatusFromViewRecord(
+    viewRecord: Record<string, unknown>,
+    fetchedAt: number
+  ): Result<GitHubPRLinkWithStatus | null> {
+    if ("no_pr" in viewRecord) {
+      return Ok(null);
+    }
+
+    const prUrl = typeof viewRecord.url === "string" ? viewRecord.url : null;
+    if (!prUrl) {
+      return Err("gh pr view response is missing a valid PR URL");
+    }
+
+    const prLink = buildGitHubPRLink(prUrl, fetchedAt);
+    if (!prLink) {
+      return Err("Invalid PR URL from gh CLI");
+    }
+
+    return Ok({
+      ...prLink,
+      status: buildGitHubPRStatus(viewRecord, fetchedAt),
+    });
+  }
+
+  private async buildPullRequestFeed(
+    normalizedWorkspaceId: string,
+    workspaceMetadata: WorkspaceMetadata
+  ): Promise<Result<WorkspacePullRequestFeed>> {
+    const fetchedAt = Date.now();
+    const baseResponse: Omit<
+      WorkspacePullRequestFeed,
+      "pr" | "reviewDecision" | "reviewers" | "threads"
+    > = {
+      workspaceId: normalizedWorkspaceId,
+      checksSummary: {
+        hasPendingChecks: false,
+        hasFailedChecks: false,
+      },
+      fetchedAt,
+    };
+
+    try {
+      const viewRecordResult = await this.getPullRequestViewRecord(
+        normalizedWorkspaceId,
+        workspaceMetadata
+      );
+      if (!viewRecordResult.success) {
+        return Err(viewRecordResult.error);
+      }
+
+      const viewRecord = viewRecordResult.data;
+      const prResult = this.buildPullRequestStatusFromViewRecord(viewRecord, fetchedAt);
+      if (!prResult.success) {
+        return Err(prResult.error);
+      }
+
+      if (!prResult.data) {
         return Ok({
           ...baseResponse,
           pr: null,
@@ -4675,17 +4723,9 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      const prUrl = typeof viewRecord.url === "string" ? viewRecord.url : null;
-      if (!prUrl) {
-        return Err("gh pr view response is missing a valid PR URL");
-      }
-
-      const prLink = buildGitHubPRLink(prUrl, fetchedAt);
-      if (!prLink) {
-        return Err("Invalid PR URL from gh CLI");
-      }
-
-      const status = buildGitHubPRStatus(viewRecord, fetchedAt);
+      const prLink = prResult.data;
+      const status = prLink.status;
+      assert(status, "PR feed status is required when a PR is present");
       const reviewDecision =
         typeof viewRecord.reviewDecision === "string" ? viewRecord.reviewDecision : null;
 
@@ -4769,47 +4809,34 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async getPullRequestFeedBatch(
-    workspaceIds: string[]
-  ): Promise<Record<string, Result<WorkspacePullRequestFeed>>> {
-    const normalizedWorkspaceIds = Array.from(
-      new Set(workspaceIds.map((workspaceId) => workspaceId.trim()).filter((workspaceId) => workspaceId))
-    );
-    const results: Record<string, Result<WorkspacePullRequestFeed>> = {};
-
-    if (normalizedWorkspaceIds.length === 0) {
-      return results;
+  async getPullRequestStatus(workspaceId: string): Promise<Result<GitHubPRLinkWithStatus | null>> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return Err("workspaceId is required");
     }
 
     try {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
-
-      const batchResults = await Promise.all(
-        normalizedWorkspaceIds.map(async (workspaceId) => {
-          const workspaceMetadata = metadataById.get(workspaceId);
-          if (!workspaceMetadata) {
-            return [workspaceId, Err(`Workspace not found: ${workspaceId}`)] as const;
-          }
-
-          return [
-            workspaceId,
-            await this.buildPullRequestFeed(workspaceId, workspaceMetadata),
-          ] as const;
-        })
+      const workspaceMetadata = allMetadata.find(
+        (metadata) => metadata.id === normalizedWorkspaceId
       );
-
-      for (const [workspaceId, result] of batchResults) {
-        results[workspaceId] = result;
+      if (!workspaceMetadata) {
+        return Err(`Workspace not found: ${normalizedWorkspaceId}`);
       }
+
+      const fetchedAt = Date.now();
+      const viewRecordResult = await this.getPullRequestViewRecord(
+        normalizedWorkspaceId,
+        workspaceMetadata
+      );
+      if (!viewRecordResult.success) {
+        return Err(viewRecordResult.error);
+      }
+
+      return this.buildPullRequestStatusFromViewRecord(viewRecordResult.data, fetchedAt);
     } catch (error) {
-      const errorMessage = getErrorMessage(error);
-      for (const workspaceId of normalizedWorkspaceIds) {
-        results[workspaceId] = Err(errorMessage);
-      }
+      return Err(getErrorMessage(error));
     }
-
-    return results;
   }
 
   /**

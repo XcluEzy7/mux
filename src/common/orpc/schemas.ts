@@ -35,6 +35,7 @@ export {
   WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
   WorkspacePullRequestFeedSchema,
+  WorkspacePullRequestStatusSchema,
 } from "./schemas/workspace";
 
 // Workspace stats schemas

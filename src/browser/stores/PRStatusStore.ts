@@ -119,6 +119,7 @@ export class PRStatusStore {
 
   // Workspace-based PR detection (keyed by workspaceId)
   private workspacePRSubscriptions = new MapStore<string, WorkspacePRCacheEntry>();
+  private workspacePRFeedSubscriptions = new MapStore<string, WorkspacePullRequestFeed | null>();
   private workspacePRCache = new Map<string, WorkspacePRCacheEntry>();
   // Keep hook snapshots instance-scoped so removed workspaces and disposed stores
   // can reclaim entries instead of leaking via module-level state.
@@ -127,6 +128,7 @@ export class PRStatusStore {
 
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
   private workspaceSubscriptionCounts = new Map<string, number>();
+  private workspaceFeedSubscriptionCounts = new Map<string, number>();
 
   // Like GitStatusStore: batch immediate refreshes triggered by subscriptions.
   private immediateUpdateQueued = false;
@@ -166,7 +168,7 @@ export class PRStatusStore {
     }
 
     // If hooks subscribed before the client was ready, ensure we refresh once it is.
-    if (this.workspaceSubscriptionCounts.size > 0) {
+    if (this.workspaceSubscriptionCounts.size > 0 || this.workspaceFeedSubscriptionCounts.size > 0) {
       this.refreshController.requestImmediate();
     }
   }
@@ -230,14 +232,53 @@ export class PRStatusStore {
       const next = (this.workspaceSubscriptionCounts.get(workspaceId) ?? 1) - 1;
       if (next <= 0) {
         this.workspaceSubscriptionCounts.delete(workspaceId);
-        this.runtimeRetryUnsubscribers.get(workspaceId)?.();
-        this.runtimeRetryUnsubscribers.delete(workspaceId);
         this.workspacePRHookCache.delete(workspaceId);
       } else {
         this.workspaceSubscriptionCounts.set(workspaceId, next);
       }
+      this.cleanupWorkspaceSubscription(workspaceId);
     };
   };
+
+  subscribeWorkspaceFeed = (workspaceId: string, listener: () => void) => {
+    const unsubscribe = this.workspacePRFeedSubscriptions.subscribeKey(workspaceId, listener);
+
+    const current = this.workspaceFeedSubscriptionCounts.get(workspaceId) ?? 0;
+    this.workspaceFeedSubscriptionCounts.set(workspaceId, current + 1);
+
+    this.refreshController.bindListeners();
+
+    if (!this.immediateUpdateQueued && this.isActive && this.client) {
+      this.immediateUpdateQueued = true;
+      queueMicrotask(() => {
+        this.immediateUpdateQueued = false;
+        this.refreshController.requestImmediate();
+      });
+    }
+
+    return () => {
+      unsubscribe();
+      const next = (this.workspaceFeedSubscriptionCounts.get(workspaceId) ?? 1) - 1;
+      if (next <= 0) {
+        this.workspaceFeedSubscriptionCounts.delete(workspaceId);
+      } else {
+        this.workspaceFeedSubscriptionCounts.set(workspaceId, next);
+      }
+      this.cleanupWorkspaceSubscription(workspaceId);
+    };
+  };
+
+  private cleanupWorkspaceSubscription(workspaceId: string): void {
+    const activeSubscriptionCount =
+      (this.workspaceSubscriptionCounts.get(workspaceId) ?? 0) +
+      (this.workspaceFeedSubscriptionCounts.get(workspaceId) ?? 0);
+    if (activeSubscriptionCount > 0) {
+      return;
+    }
+
+    this.runtimeRetryUnsubscribers.get(workspaceId)?.();
+    this.runtimeRetryUnsubscribers.delete(workspaceId);
+  }
 
   /**
    * Get workspace PR detection result.
@@ -302,70 +343,111 @@ export class PRStatusStore {
     return nextSnapshot;
   }
 
-  /**
-   * Detect PR for workspace's current branch using the typed workspace PR feed endpoint.
-   */
-  async detectWorkspacePR(workspaceId: string): Promise<void> {
-    await this.detectWorkspacePRBatch([workspaceId]);
+  getWorkspacePRFeed(workspaceId: string): WorkspacePullRequestFeed | null {
+    return this.getWorkspacePR(workspaceId)?.feed ?? null;
   }
 
-  private async detectWorkspacePRBatch(workspaceIds: string[]): Promise<void> {
+  /**
+   * Detect PR for workspace's current branch using a lightweight status-only endpoint.
+   */
+  async detectWorkspacePR(workspaceId: string): Promise<void> {
     if (!this.client || !this.isActive) return;
-    if (workspaceIds.length === 0) return;
-
-    const existingEntries = new Map<string, WorkspacePRCacheEntry | undefined>();
-    const markWorkspaceError = (workspaceId: string, error: string) => {
-      const existing = existingEntries.get(workspaceId);
-      this.workspacePRCache.set(workspaceId, {
-        prLink: existing?.prLink ?? null,
-        status: existing?.status,
-        feed: existing?.feed,
-        error,
-        loading: false,
-        fetchedAt: Date.now(),
-      });
-      this.workspacePRSubscriptions.bump(workspaceId);
-    };
-
-    for (const workspaceId of workspaceIds) {
-      const existing = this.workspacePRCache.get(workspaceId);
-      existingEntries.set(workspaceId, existing);
-      this.workspacePRCache.set(workspaceId, {
-        prLink: existing?.prLink ?? null,
-        status: existing?.status,
-        feed: existing?.feed,
-        loading: true,
-        fetchedAt: Date.now(),
-      });
-      this.workspacePRSubscriptions.bump(workspaceId);
-    }
+    const existing = this.workspacePRCache.get(workspaceId);
+    this.workspacePRCache.set(workspaceId, {
+      prLink: existing?.prLink ?? null,
+      status: existing?.status,
+      feed: existing?.feed,
+      loading: true,
+      fetchedAt: Date.now(),
+    });
+    this.workspacePRSubscriptions.bump(workspaceId);
 
     try {
-      const results = await this.client.workspace.getPullRequestFeedBatch({ workspaceIds });
+      const result = await this.client.workspace.getPullRequestStatus({ workspaceId });
       if (!this.isActive) return;
 
-      for (const workspaceId of workspaceIds) {
-        const result = results[workspaceId];
-        if (!result) {
-          markWorkspaceError(workspaceId, "Batch PR feed omitted a subscribed workspace");
-          continue;
-        }
-
-        if (!result.success) {
-          markWorkspaceError(workspaceId, result.error);
-          continue;
-        }
-
-        this.applyFeedToCache(workspaceId, result.data);
+      if (!result.success) {
+        this.workspacePRCache.set(workspaceId, {
+          prLink: existing?.prLink ?? null,
+          status: existing?.status,
+          feed: existing?.feed,
+          error: result.error,
+          loading: false,
+          fetchedAt: Date.now(),
+        });
         this.workspacePRSubscriptions.bump(workspaceId);
+        return;
+      }
+
+      const previousFeed = existing?.feed;
+      const nextFeed =
+        result.data == null
+          ? previousFeed?.pr == null
+            ? previousFeed
+            : undefined
+          : previousFeed?.pr?.url === result.data.url
+            ? previousFeed
+            : undefined;
+      const nextPRLink = result.data
+        ? {
+            type: "github-pr" as const,
+            url: result.data.url,
+            owner: result.data.owner,
+            repo: result.data.repo,
+            number: result.data.number,
+            detectedAt: result.data.detectedAt,
+            occurrenceCount: result.data.occurrenceCount,
+          }
+        : null;
+      this.workspacePRCache.set(workspaceId, {
+        prLink: nextPRLink,
+        status: result.data?.status,
+        feed: nextFeed,
+        loading: false,
+        fetchedAt: result.data?.status?.fetchedAt ?? Date.now(),
+      });
+      if (nextPRLink) {
+        prStatusLRU.set(workspaceId, {
+          prLink: nextPRLink,
+          status: result.data?.status,
+        });
+      } else {
+        prStatusLRU.remove(workspaceId);
+      }
+      this.workspacePRSubscriptions.bump(workspaceId);
+      if (previousFeed !== nextFeed) {
+        this.workspacePRFeedSubscriptions.bump(workspaceId);
       }
     } catch (err) {
       if (!this.isActive) return;
 
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      for (const workspaceId of workspaceIds) {
-        markWorkspaceError(workspaceId, errorMessage);
+      this.workspacePRCache.set(workspaceId, {
+        prLink: existing?.prLink ?? null,
+        status: existing?.status,
+        feed: existing?.feed,
+        error: errorMessage,
+        loading: false,
+        fetchedAt: Date.now(),
+      });
+      this.workspacePRSubscriptions.bump(workspaceId);
+    }
+  }
+
+  private async detectWorkspaceFeed(workspaceId: string): Promise<void> {
+    if (!this.client || !this.isActive) return;
+
+    try {
+      const result = await this.client.workspace.getPullRequestFeed({ workspaceId });
+      if (!this.isActive || !result.success) {
+        return;
       }
+
+      this.applyFeedToCache(workspaceId, result.data);
+      this.workspacePRSubscriptions.bump(workspaceId);
+      this.workspacePRFeedSubscriptions.bump(workspaceId);
+    } catch {
+      // Keep the previous detailed feed visible if the enrichment refresh fails.
     }
   }
 
@@ -416,6 +498,11 @@ export class PRStatusStore {
     return now - entry.fetchedAt > STATUS_CACHE_TTL_MS;
   }
 
+  private shouldFetchWorkspaceFeed(entry: WorkspacePRCacheEntry | undefined, now: number): boolean {
+    if (!entry?.feed) return true;
+    return now - entry.feed.fetchedAt > STATUS_CACHE_TTL_MS;
+  }
+
   /**
    * Refresh PR status for all subscribed workspaces.
    * Called via RefreshController (focus + debounced refresh).
@@ -423,55 +510,67 @@ export class PRStatusStore {
   private async refreshAll(): Promise<void> {
     if (!this.client || !this.isActive) return;
 
-    const workspaceIds = Array.from(this.workspaceSubscriptionCounts.keys());
+    const workspaceIds = Array.from(
+      new Set([
+        ...this.workspaceSubscriptionCounts.keys(),
+        ...this.workspaceFeedSubscriptionCounts.keys(),
+      ])
+    );
     if (workspaceIds.length === 0) {
       return;
     }
 
     const now = Date.now();
-    const workspaceIdsToRefresh: string[] = [];
+    const refreshes: Array<Promise<void>> = [];
 
     for (const workspaceId of workspaceIds) {
       const cached = this.workspacePRCache.get(workspaceId);
-      if (this.shouldFetchWorkspace(cached, now)) {
-        // Skip passive PR refresh for devcontainer workspaces whose runtime is
-        // not already running, to avoid waking stopped containers.
-        const metadata = this.workspaceMetadata.get(workspaceId);
-        if (
-          metadata &&
-          !canRunPassiveRuntimeCommand(
-            metadata.runtimeConfig,
-            this.runtimeStatusStore.getStatus(workspaceId)
-          )
-        ) {
-          // Arm a one-shot retry so the workspace gets a PR refresh once the
-          // runtime becomes passively runnable again.
-          if (!this.runtimeRetryUnsubscribers.has(workspaceId)) {
-            let firedSynchronously = false;
-            const unsubscribe = onPassiveRuntimeEligible(
-              workspaceId,
-              metadata.runtimeConfig,
-              this.runtimeStatusStore,
-              () => {
-                firedSynchronously = true;
-                this.runtimeRetryUnsubscribers.delete(workspaceId);
-                // Clear PR cache so TTL doesn't suppress the deferred retry.
-                this.workspacePRCache.delete(workspaceId);
-                this.refreshController.requestImmediate();
-              }
-            );
-            if (!firedSynchronously) {
-              this.runtimeRetryUnsubscribers.set(workspaceId, unsubscribe);
-            }
-          }
-          continue;
-        }
+      const statusSubscribed = this.workspaceSubscriptionCounts.has(workspaceId);
+      const feedSubscribed = this.workspaceFeedSubscriptionCounts.has(workspaceId);
+      const needsFeedRefresh = feedSubscribed && this.shouldFetchWorkspaceFeed(cached, now);
+      const needsStatusRefresh =
+        statusSubscribed && !needsFeedRefresh && this.shouldFetchWorkspace(cached, now);
 
-        workspaceIdsToRefresh.push(workspaceId);
+      if (!needsFeedRefresh && !needsStatusRefresh) {
+        continue;
       }
+
+      // Skip passive PR refresh for devcontainer workspaces whose runtime is
+      // not already running, to avoid waking stopped containers.
+      const metadata = this.workspaceMetadata.get(workspaceId);
+      if (
+        metadata &&
+        !canRunPassiveRuntimeCommand(
+          metadata.runtimeConfig,
+          this.runtimeStatusStore.getStatus(workspaceId)
+        )
+      ) {
+        if (!this.runtimeRetryUnsubscribers.has(workspaceId)) {
+          let firedSynchronously = false;
+          const unsubscribe = onPassiveRuntimeEligible(
+            workspaceId,
+            metadata.runtimeConfig,
+            this.runtimeStatusStore,
+            () => {
+              firedSynchronously = true;
+              this.runtimeRetryUnsubscribers.delete(workspaceId);
+              this.workspacePRCache.delete(workspaceId);
+              this.refreshController.requestImmediate();
+            }
+          );
+          if (!firedSynchronously) {
+            this.runtimeRetryUnsubscribers.set(workspaceId, unsubscribe);
+          }
+        }
+        continue;
+      }
+
+      refreshes.push(
+        needsFeedRefresh ? this.detectWorkspaceFeed(workspaceId) : this.detectWorkspacePR(workspaceId)
+      );
     }
 
-    await this.detectWorkspacePRBatch(workspaceIdsToRefresh);
+    await Promise.all(refreshes);
   }
 
   /**
@@ -509,8 +608,8 @@ export function useWorkspacePullRequestFeed(workspaceId: string): WorkspacePullR
   const store = getPRStatusStoreInstance();
 
   return useSyncExternalStore(
-    (listener) => store.subscribeWorkspace(workspaceId, listener),
-    () => store.getWorkspacePR(workspaceId)?.feed ?? null
+    (listener) => store.subscribeWorkspaceFeed(workspaceId, listener),
+    () => store.getWorkspacePRFeed(workspaceId)
   );
 }
 

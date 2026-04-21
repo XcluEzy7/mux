@@ -2912,7 +2912,7 @@ describe("WorkspaceService getPullRequestFeed", () => {
     }
   });
 
-  test("batches multiple PR feed lookups behind one metadata load", async () => {
+  test("returns lightweight PR status without GraphQL enrichment", async () => {
     const { workspaceService, executeBashMock } = createServiceHarness((workspaceId, script) => {
       if (script.includes("gh pr view --json")) {
         return Promise.resolve(
@@ -2933,38 +2933,19 @@ describe("WorkspaceService getPullRequestFeed", () => {
         );
       }
 
-      if (script.includes("gh api graphql")) {
-        return Promise.resolve(
-          bashOk(
-            JSON.stringify({
-              data: {
-                repository: {
-                  pullRequest: {
-                    mergeQueueEntry: null,
-                    reviewThreads: { nodes: [] },
-                  },
-                },
-              },
-            })
-          )
-        );
-      }
-
       throw new Error(`Unexpected executeBash script: ${script}`);
     });
 
-    const config = (
-      workspaceService as unknown as { config: Pick<Config, "getAllWorkspaceMetadata"> }
-    ).config;
-    const getAllWorkspaceMetadataMock = config.getAllWorkspaceMetadata as ReturnType<typeof mock>;
+    const result = await workspaceService.getPullRequestStatus("ws-pr");
 
-    const result = await workspaceService.getPullRequestFeedBatch(["ws-pr", "ws-invalid-url"]);
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
 
-    expect(Object.keys(result)).toEqual(["ws-pr", "ws-invalid-url"]);
-    expect(result["ws-pr"]?.success).toBe(true);
-    expect(result["ws-invalid-url"]?.success).toBe(true);
-    expect(getAllWorkspaceMetadataMock.mock.calls.length).toBe(1);
-    expect(executeBashMock).toHaveBeenCalledTimes(4);
+    expect(result.data?.url).toBe("https://github.com/example/repo/pull/42");
+    expect(result.data?.status?.title).toBe("PR for ws-pr");
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
   });
 });
 

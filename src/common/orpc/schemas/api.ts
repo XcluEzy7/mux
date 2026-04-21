@@ -46,6 +46,7 @@ import {
   WorkspaceActivitySnapshotSchema,
   WorkspaceHeartbeatSettingsSchema,
   WorkspacePullRequestFeedSchema,
+  WorkspacePullRequestStatusSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -1083,13 +1084,13 @@ export const workspace = {
     }),
     output: z.array(ProjectGitStatusResultSchema),
   },
+  getPullRequestStatus: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(WorkspacePullRequestStatusSchema.nullable(), z.string()),
+  },
   getPullRequestFeed: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(WorkspacePullRequestFeedSchema, z.string()),
-  },
-  getPullRequestFeedBatch: {
-    input: z.object({ workspaceIds: z.array(z.string()) }),
-    output: z.record(z.string(), ResultSchema(WorkspacePullRequestFeedSchema, z.string())),
   },
   archiveMergedInProject: {
     input: z.object({ projectPath: z.string() }),

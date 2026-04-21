@@ -3363,6 +3363,16 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.getProjectGitStatuses(input.workspaceId, input.baseRef);
         }),
+      getPullRequestStatus: t
+        .input(schemas.workspace.getPullRequestStatus.input)
+        .output(schemas.workspace.getPullRequestStatus.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.getPullRequestStatus(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
       getPullRequestFeed: t
         .input(schemas.workspace.getPullRequestFeed.input)
         .output(schemas.workspace.getPullRequestFeed.output)
@@ -3372,12 +3382,6 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
           return { success: true, data: result.data };
-        }),
-      getPullRequestFeedBatch: t
-        .input(schemas.workspace.getPullRequestFeedBatch.input)
-        .output(schemas.workspace.getPullRequestFeedBatch.output)
-        .handler(async ({ context, input }) => {
-          return context.workspaceService.getPullRequestFeedBatch(input.workspaceIds);
         }),
       archiveMergedInProject: t
         .input(schemas.workspace.archiveMergedInProject.input)

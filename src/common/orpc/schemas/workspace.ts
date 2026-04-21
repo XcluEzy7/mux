@@ -324,9 +324,13 @@ export const GitHubPRLinkWithStatusSchema = GitHubPRLinkSchema.extend({
   error: z.string().optional(),
 });
 
+export const WorkspacePullRequestStatusSchema = GitHubPRLinkSchema.extend({
+  status: GitHubPRStatusSchema.optional(),
+});
+
 export const WorkspacePullRequestFeedSchema = z.object({
   workspaceId: z.string(),
-  pr: GitHubPRLinkWithStatusSchema.nullable(),
+  pr: WorkspacePullRequestStatusSchema.nullable(),
   reviewDecision: z.string().nullable(),
   checksSummary: z.object({
     hasPendingChecks: z.boolean(),

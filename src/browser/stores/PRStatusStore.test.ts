@@ -73,12 +73,10 @@ async function runPassiveRefreshScenario(
   runtimeStatus: RuntimeStatus | null,
   shouldRun: boolean
 ): Promise<number> {
-  const getPullRequestFeedBatch = mock(() => {
+  const getPullRequestStatus = mock(() => {
     // Return a top-level failure so detectWorkspacePR exits quickly.
     // These tests only care whether passive refresh attempted the endpoint call.
-    return Promise.resolve({
-      [metadata.id]: { success: false as const, error: "gh unavailable" },
-    });
+    return Promise.resolve({ success: false as const, error: "gh unavailable" });
   });
 
   const store = new PRStatusStore({
@@ -88,7 +86,7 @@ async function runPassiveRefreshScenario(
   try {
     store.setClient({
       workspace: {
-        getPullRequestFeedBatch,
+        getPullRequestStatus,
       },
     } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -97,12 +95,12 @@ async function runPassiveRefreshScenario(
     store.subscribeWorkspace(metadata.id, () => undefined);
 
     if (shouldRun) {
-      await waitUntil(() => getPullRequestFeedBatch.mock.calls.length > 0);
+      await waitUntil(() => getPullRequestStatus.mock.calls.length > 0);
     } else {
       await sleep(100);
     }
 
-    return getPullRequestFeedBatch.mock.calls.length;
+    return getPullRequestStatus.mock.calls.length;
   } finally {
     store.dispose();
   }
@@ -142,17 +140,15 @@ describe("passive refresh runtime gating", () => {
   it("retries PR refresh when devcontainer runtime transitions from null to running", async () => {
     const metadata = createWorkspaceMetadata("dc-retry", DEVCONTAINER_RUNTIME);
     const runtimeStatusStore = createRuntimeStatusStoreMock(null);
-    const getPullRequestFeedBatch = mock(() => {
-      return Promise.resolve({
-        [metadata.id]: { success: false as const, error: "gh unavailable" },
-      });
-    });
+    const getPullRequestStatus = mock(() =>
+      Promise.resolve({ success: false as const, error: "gh unavailable" })
+    );
     const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
 
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestStatus,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -161,13 +157,13 @@ describe("passive refresh runtime gating", () => {
       store.subscribeWorkspace(metadata.id, () => undefined);
 
       await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(0);
+      expect(getPullRequestStatus.mock.calls.length).toBe(0);
 
       runtimeStatusStore.setStatus("running");
       runtimeStatusStore.emit(metadata.id);
 
-      await waitUntil(() => getPullRequestFeedBatch.mock.calls.length > 0);
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(1);
+      await waitUntil(() => getPullRequestStatus.mock.calls.length > 0);
+      expect(getPullRequestStatus.mock.calls.length).toBe(1);
     } finally {
       store.dispose();
     }
@@ -176,17 +172,15 @@ describe("passive refresh runtime gating", () => {
   it("does not retry PR refresh when devcontainer runtime stays stopped", async () => {
     const metadata = createWorkspaceMetadata("dc-stays-stopped", DEVCONTAINER_RUNTIME);
     const runtimeStatusStore = createRuntimeStatusStoreMock(null);
-    const getPullRequestFeedBatch = mock(() => {
-      return Promise.resolve({
-        [metadata.id]: { success: false as const, error: "gh unavailable" },
-      });
-    });
+    const getPullRequestStatus = mock(() =>
+      Promise.resolve({ success: false as const, error: "gh unavailable" })
+    );
     const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
 
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestStatus,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -195,13 +189,13 @@ describe("passive refresh runtime gating", () => {
       store.subscribeWorkspace(metadata.id, () => undefined);
 
       await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(0);
+      expect(getPullRequestStatus.mock.calls.length).toBe(0);
 
       runtimeStatusStore.setStatus("stopped");
       runtimeStatusStore.emit(metadata.id);
       await sleep(100);
 
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(0);
+      expect(getPullRequestStatus.mock.calls.length).toBe(0);
     } finally {
       store.dispose();
     }
@@ -286,9 +280,7 @@ describe("PR feed caching", () => {
   it("stores the full workspace PR feed when fetch succeeds", async () => {
     const workspaceId = "ws-feed";
     const feed = makeFeed(workspaceId);
-    const getPullRequestFeedBatch = mock(() =>
-      Promise.resolve({ [workspaceId]: { success: true as const, data: feed } })
-    );
+    const getPullRequestFeed = mock(() => Promise.resolve({ success: true as const, data: feed }));
     const store = new PRStatusStore({
       getStatus: () => "running",
     });
@@ -296,7 +288,7 @@ describe("PR feed caching", () => {
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestFeed,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -304,15 +296,15 @@ describe("PR feed caching", () => {
         new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
       );
       await sleep(0);
-      store.subscribeWorkspace(workspaceId, () => undefined);
+      store.subscribeWorkspaceFeed(workspaceId, () => undefined);
 
-      await waitUntil(() => Boolean(store.getWorkspacePR(workspaceId)?.feed));
+      await waitUntil(() => Boolean(store.getWorkspacePRFeed(workspaceId)));
 
       const cached = store.getWorkspacePR(workspaceId);
       expect(cached?.feed).toEqual(feed);
       expect(cached?.prLink?.number).toBe(42);
       expect(cached?.status?.title).toBe("Add PR watcher details UI");
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(1);
+      expect(getPullRequestFeed.mock.calls.length).toBe(1);
     } finally {
       store.dispose();
     }
@@ -321,9 +313,7 @@ describe("PR feed caching", () => {
   it("retains the previous feed when refresh fails", async () => {
     const workspaceId = "ws-feed-error";
     const feed = makeFeed(workspaceId);
-    const getPullRequestFeedBatch = mock(() =>
-      Promise.resolve({ [workspaceId]: { success: true as const, data: feed } })
-    );
+    const getPullRequestFeed = mock(() => Promise.resolve({ success: true as const, data: feed }));
     const store = new PRStatusStore({
       getStatus: () => "running",
     });
@@ -331,7 +321,7 @@ describe("PR feed caching", () => {
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestFeed,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -339,17 +329,16 @@ describe("PR feed caching", () => {
         new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
       );
       await sleep(0);
-      store.subscribeWorkspace(workspaceId, () => undefined);
-      await waitUntil(() => Boolean(store.getWorkspacePR(workspaceId)?.feed));
+      store.subscribeWorkspaceFeed(workspaceId, () => undefined);
+      await waitUntil(() => Boolean(store.getWorkspacePRFeed(workspaceId)));
 
-      getPullRequestFeedBatch.mockImplementationOnce(() => Promise.reject(new Error("network error")));
+      getPullRequestFeed.mockImplementationOnce(() => Promise.reject(new Error("network error")));
 
       await (
-        store as unknown as { detectWorkspacePR(id: string): Promise<void> }
-      ).detectWorkspacePR(workspaceId);
+        store as unknown as { detectWorkspaceFeed(id: string): Promise<void> }
+      ).detectWorkspaceFeed(workspaceId);
 
       const cached = store.getWorkspacePR(workspaceId);
-      expect(cached?.error).toBe("network error");
       expect(cached?.feed).toEqual(feed);
     } finally {
       store.dispose();
@@ -373,8 +362,8 @@ describe("PR feed caching", () => {
       },
     };
 
-    const getPullRequestFeedBatch = mock(() =>
-      Promise.resolve({ [workspaceId]: { success: true as const, data: initialFeed } })
+    const getPullRequestFeed = mock(() =>
+      Promise.resolve({ success: true as const, data: initialFeed })
     );
     const store = new PRStatusStore({
       getStatus: () => "running",
@@ -383,7 +372,7 @@ describe("PR feed caching", () => {
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestFeed,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -391,19 +380,19 @@ describe("PR feed caching", () => {
         new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
       );
       await sleep(0);
-      store.subscribeWorkspace(workspaceId, () => undefined);
-      await waitUntil(() => Boolean(store.getWorkspacePR(workspaceId)?.feed));
+      store.subscribeWorkspaceFeed(workspaceId, () => undefined);
+      await waitUntil(() => Boolean(store.getWorkspacePRFeed(workspaceId)));
 
       const initialSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
       expect(initialSnapshot?.status?.title).toBe("Add PR watcher details UI");
 
-      getPullRequestFeedBatch.mockImplementationOnce(() =>
-        Promise.resolve({ [workspaceId]: { success: true as const, data: refreshedFeed } })
+      getPullRequestFeed.mockImplementationOnce(() =>
+        Promise.resolve({ success: true as const, data: refreshedFeed })
       );
 
       await (
-        store as unknown as { detectWorkspacePR(id: string): Promise<void> }
-      ).detectWorkspacePR(workspaceId);
+        store as unknown as { detectWorkspaceFeed(id: string): Promise<void> }
+      ).detectWorkspaceFeed(workspaceId);
 
       const refreshedSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
       expect(refreshedSnapshot).not.toBe(initialSnapshot);
@@ -418,18 +407,14 @@ describe("PR feed caching", () => {
     }
   });
 
-  it("refreshes multiple subscribed workspaces with one batch request", async () => {
+  it("refreshes multiple subscribed workspaces independently for status-only updates", async () => {
     const workspaceA = "ws-feed-a";
     const workspaceB = "ws-feed-b";
-    const getPullRequestFeedBatch = mock((input: { workspaceIds: string[] }) =>
-      Promise.resolve(
-        Object.fromEntries(
-          input.workspaceIds.map((workspaceId) => [
-            workspaceId,
-            { success: true as const, data: makeFeed(workspaceId) },
-          ])
-        )
-      )
+    const getPullRequestStatus = mock((input: { workspaceId: string }) =>
+      Promise.resolve({
+        success: true as const,
+        data: makeFeed(input.workspaceId).pr,
+      })
     );
     const store = new PRStatusStore({
       getStatus: () => "running",
@@ -438,7 +423,7 @@ describe("PR feed caching", () => {
     try {
       store.setClient({
         workspace: {
-          getPullRequestFeedBatch,
+          getPullRequestStatus,
         },
       } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
 
@@ -454,14 +439,11 @@ describe("PR feed caching", () => {
 
       await waitUntil(
         () =>
-          Boolean(store.getWorkspacePR(workspaceA)?.feed) &&
-          Boolean(store.getWorkspacePR(workspaceB)?.feed)
+          Boolean(store.getWorkspacePR(workspaceA)?.prLink) &&
+          Boolean(store.getWorkspacePR(workspaceB)?.prLink)
       );
 
-      expect(getPullRequestFeedBatch.mock.calls.length).toBe(1);
-      expect(getPullRequestFeedBatch.mock.calls[0]?.[0]).toEqual({
-        workspaceIds: [workspaceA, workspaceB],
-      });
+      expect(getPullRequestStatus.mock.calls.length).toBe(2);
     } finally {
       store.dispose();
     }
