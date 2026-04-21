@@ -1054,7 +1054,7 @@ describe("Config", () => {
     }
   });
 
-  it("consumes stale pending self-write state after a null-signature event", async () => {
+  it("does not swallow the first null-signature event while self-write suppression is pending", async () => {
     const configFile = path.join(tempDir, "config.json");
     fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
 
@@ -1084,13 +1084,8 @@ describe("Config", () => {
       await config.saveConfig(loaded);
 
       fs.rmSync(configFile, { force: true });
-
-      // First null-signature event is consumed while pending self-write is still set.
       watchCallback?.("rename", path.basename(configFile));
-      expect(notifications).toBe(0);
 
-      // A subsequent null-signature event should no longer be suppressed.
-      watchCallback?.("rename", path.basename(configFile));
       expect(notifications).toBe(1);
 
       unsubscribe();

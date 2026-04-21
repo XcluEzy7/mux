@@ -635,11 +635,14 @@ export class Config {
           }
 
           if (this.pendingSelfWriteSignature !== null && changedFileSignature === null) {
-            // Consume at most one null-signature event while we are waiting for our
-            // own write notification. If the write event is coalesced/missed, this
-            // prevents stale state from suppressing future external delete/rename events.
+            // Clear stale self-write suppression. Keep processing filename-targeted
+            // events because a null signature can be the only delete/rename signal.
+            // Missing-filename events are often transient parent-dir noise during
+            // our own atomic save, so keep ignoring those.
             this.pendingSelfWriteSignature = null;
-            return;
+            if (!changedFileName) {
+              return;
+            }
           }
 
           if (!changedFileName && changedFileSignature === this.watchedConfigFileSignature) {
