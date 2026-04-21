@@ -51,4 +51,39 @@ describe("normalizeToolsConfigForSave", () => {
       custom: [],
     });
   });
+
+  it("deduplicates custom tools by trimmed ID before save", () => {
+    const tools: ToolsConfig = {
+      defaults: { mode: "allow_all_except", toolNames: [] },
+      custom: [
+        {
+          id: "weather",
+          label: "Weather",
+          command: "python",
+          args: ["first.py"],
+          enabled: true,
+        },
+        {
+          id: " weather ",
+          label: "Weather Duplicate",
+          command: "python",
+          args: ["second.py"],
+          enabled: true,
+        },
+      ],
+    };
+
+    expect(normalizeToolsConfigForSave(tools)).toEqual({
+      defaults: { mode: "allow_all_except", toolNames: [] },
+      custom: [
+        {
+          id: "weather",
+          label: "Weather",
+          command: "python",
+          args: ["first.py"],
+          enabled: true,
+        },
+      ],
+    });
+  });
 });

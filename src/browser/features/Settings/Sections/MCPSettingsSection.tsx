@@ -41,12 +41,8 @@ import {
 import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
-import { shellQuote } from "@/common/utils/shell";
 import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
-
-function buildSyntheticCustomToolCommand(command: string, args?: string[]): string {
-  return [command, ...(args ?? [])].map((arg) => shellQuote(arg)).join(" ");
-}
+import { buildSyntheticCustomToolCommand } from "@/common/utils/customToolMcp";
 
 export function buildSyntheticCustomToolServerCommandMap(
   customTools: CustomTool[] | undefined

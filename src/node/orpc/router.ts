@@ -195,18 +195,32 @@ function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): numb
 }
 
 export function normalizeToolsConfigForSave(tools: ToolsConfig): ToolsConfig {
+  const seenCustomToolIds = new Set<string>();
+
   return {
     defaults: {
       mode: tools.defaults.mode === "deny_all_except" ? "deny_all_except" : "allow_all_except",
       toolNames: tools.defaults.toolNames.filter((name) => name.trim().length > 0),
     },
     custom: tools.custom
-      .filter(
-        (tool) =>
-          tool.id.trim().length > 0 &&
-          tool.label.trim().length > 0 &&
-          tool.command.trim().length > 0
-      )
+      .filter((tool) => {
+        const trimmedId = tool.id.trim();
+        if (
+          trimmedId.length === 0 ||
+          tool.label.trim().length === 0 ||
+          tool.command.trim().length === 0
+        ) {
+          return false;
+        }
+
+        // Match config-load normalization so save/update does not silently drop a
+        // different duplicate on the next fetch.
+        if (seenCustomToolIds.has(trimmedId)) {
+          return false;
+        }
+        seenCustomToolIds.add(trimmedId);
+        return true;
+      })
       .map((tool) => ({
         ...tool,
         id: tool.id.trim(),

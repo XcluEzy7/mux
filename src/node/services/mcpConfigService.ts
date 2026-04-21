@@ -13,16 +13,12 @@ import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
-import { shellQuote } from "@/common/utils/shell";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
+import { buildSyntheticCustomToolCommand } from "@/common/utils/customToolMcp";
 
 export function getCustomToolMcpServerName(customToolId: string): string {
   return `${CUSTOM_TOOL_MCP_SERVER_PREFIX}${customToolId}`;
-}
-
-function buildQuotedCommand(command: string, args?: string[]): string {
-  return [command, ...(args ?? [])].map((arg) => shellQuote(arg)).join(" ");
 }
 
 export class MCPConfigService {
@@ -195,7 +191,7 @@ export class MCPConfigService {
 
       customServers[getCustomToolMcpServerName(customTool.id)] = {
         transport: "stdio",
-        command: buildQuotedCommand(trimmedCommand, customTool.args),
+        command: buildSyntheticCustomToolCommand(trimmedCommand, customTool.args),
         disabled: false,
       };
     }

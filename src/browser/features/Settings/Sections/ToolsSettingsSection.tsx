@@ -392,6 +392,8 @@ export function ToolsSettingsSection() {
 
   const parsedToolNames = parseCommaSeparatedValues(toolNamesInput);
   const duplicateToolNames = getDuplicateValues(parsedToolNames);
+  const warnsAboutEmptyDenyAllAllowlist =
+    toolsConfig.defaults.mode === "deny_all_except" && parsedToolNames.length === 0;
 
   const duplicateCustomToolIds = getDuplicateValues(
     toolsConfig.custom.map((tool) => tool.id.trim()).filter((toolId) => toolId.length > 0)
@@ -533,6 +535,12 @@ export function ToolsSettingsSection() {
           {duplicateToolNames.length > 0 ? (
             <p className="text-error mt-1 text-xs">
               Remove duplicate tool names: {duplicateToolNames.join(", ")}
+            </p>
+          ) : null}
+          {warnsAboutEmptyDenyAllAllowlist ? (
+            <p className="text-warning mt-1 text-xs">
+              Saving with an empty allowlist in this mode disables every non-runtime tool until
+              you add allowed tool names.
             </p>
           ) : null}
           {parsedToolNames.length > 0 ? (
