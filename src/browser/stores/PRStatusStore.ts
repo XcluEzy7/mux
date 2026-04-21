@@ -68,6 +68,47 @@ interface WorkspacePRCacheEntry {
   loading: boolean;
 }
 
+function hasSameMergeQueueEntry(
+  previousEntry: GitHubPRStatus["mergeQueueEntry"],
+  nextEntry: GitHubPRStatus["mergeQueueEntry"]
+): boolean {
+  if (previousEntry === nextEntry) {
+    return true;
+  }
+
+  if (previousEntry == null || nextEntry == null) {
+    return previousEntry == null && nextEntry == null;
+  }
+
+  return previousEntry.state === nextEntry.state && previousEntry.position === nextEntry.position;
+}
+
+function hasSameHookSnapshotStatus(
+  previousStatus: GitHubPRStatus | undefined,
+  nextStatus: GitHubPRStatus | undefined
+): boolean {
+  if (previousStatus === nextStatus) {
+    return true;
+  }
+
+  if (previousStatus == null || nextStatus == null) {
+    return previousStatus == null && nextStatus == null;
+  }
+
+  return (
+    previousStatus.state === nextStatus.state &&
+    previousStatus.mergeable === nextStatus.mergeable &&
+    previousStatus.mergeStateStatus === nextStatus.mergeStateStatus &&
+    previousStatus.title === nextStatus.title &&
+    previousStatus.isDraft === nextStatus.isDraft &&
+    previousStatus.headRefName === nextStatus.headRefName &&
+    previousStatus.baseRefName === nextStatus.baseRefName &&
+    previousStatus.hasPendingChecks === nextStatus.hasPendingChecks &&
+    previousStatus.hasFailedChecks === nextStatus.hasFailedChecks &&
+    hasSameMergeQueueEntry(previousStatus.mergeQueueEntry, nextStatus.mergeQueueEntry)
+  );
+}
+
 /**
  * Store for GitHub PR status. Fetches status via gh CLI and caches results.
  */
@@ -240,18 +281,7 @@ export class PRStatusStore {
       return null;
     }
 
-    const previousStatus = existing?.status;
-    const nextStatus = cached.status;
-    const statusUnchanged =
-      previousStatus === nextStatus ||
-      (previousStatus != null &&
-        nextStatus != null &&
-        previousStatus.state === nextStatus.state &&
-        previousStatus.mergeable === nextStatus.mergeable &&
-        previousStatus.mergeStateStatus === nextStatus.mergeStateStatus &&
-        previousStatus.hasPendingChecks === nextStatus.hasPendingChecks &&
-        previousStatus.hasFailedChecks === nextStatus.hasFailedChecks &&
-        previousStatus.isDraft === nextStatus.isDraft);
+    const statusUnchanged = hasSameHookSnapshotStatus(existing?.status, cached.status);
 
     if (
       existing?.url === cached.prLink.url &&

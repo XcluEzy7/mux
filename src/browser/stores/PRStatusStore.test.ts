@@ -345,4 +345,66 @@ describe("PR feed caching", () => {
       store.dispose();
     }
   });
+
+  it("refreshes the hook snapshot when status title or merge queue changes", async () => {
+    const workspaceId = "ws-feed-status-refresh";
+    const initialFeed = makeFeed(workspaceId);
+    const refreshedFeed = makeFeed(workspaceId);
+    refreshedFeed.pr = {
+      ...refreshedFeed.pr!,
+      status: {
+        ...refreshedFeed.pr!.status!,
+        title: "Add PR watcher details UI v2",
+        baseRefName: "dev",
+        mergeQueueEntry: {
+          state: "QUEUED",
+          position: 2,
+        },
+      },
+    };
+
+    const getPullRequestFeed = mock(() =>
+      Promise.resolve({ success: true as const, data: initialFeed })
+    );
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestFeed,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+      await sleep(0);
+      store.subscribeWorkspace(workspaceId, () => undefined);
+      await waitUntil(() => Boolean(store.getWorkspacePR(workspaceId)?.feed));
+
+      const initialSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
+      expect(initialSnapshot?.status?.title).toBe("Add PR watcher details UI");
+
+      getPullRequestFeed.mockImplementationOnce(() =>
+        Promise.resolve({ success: true as const, data: refreshedFeed })
+      );
+
+      await (
+        store as unknown as { detectWorkspacePR(id: string): Promise<void> }
+      ).detectWorkspacePR(workspaceId);
+
+      const refreshedSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
+      expect(refreshedSnapshot).not.toBe(initialSnapshot);
+      expect(refreshedSnapshot?.status?.title).toBe("Add PR watcher details UI v2");
+      expect(refreshedSnapshot?.status?.baseRefName).toBe("dev");
+      expect(refreshedSnapshot?.status?.mergeQueueEntry).toEqual({
+        state: "QUEUED",
+        position: 2,
+      });
+    } finally {
+      store.dispose();
+    }
+  });
 });
