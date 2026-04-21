@@ -4636,10 +4636,20 @@ export class WorkspaceService extends EventEmitter {
     };
 
     try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const workspaceMetadata = allMetadata.find(
+        (metadata) => metadata.id === normalizedWorkspaceId
+      );
+      if (!workspaceMetadata) {
+        return Err(`Workspace not found: ${normalizedWorkspaceId}`);
+      }
+
       const viewResult = await this.executeBash(
         normalizedWorkspaceId,
         `gh pr view --json ${GH_PR_VIEW_JSON_FIELDS} 2>/dev/null || echo '{"no_pr":true}'`,
         {
+          cwdMode: "repo-root",
+          repoRootProjectPath: workspaceMetadata.projectPath,
           timeout_secs: 15,
           // gh requires the runtime environment — devcontainer auth/CLI
           // may only exist inside the container.
@@ -4707,6 +4717,8 @@ export class WorkspaceService extends EventEmitter {
               "2>/dev/null",
             ].join(" "),
             {
+              cwdMode: "repo-root",
+              repoRootProjectPath: workspaceMetadata.projectPath,
               timeout_secs: 10,
               // gh requires the runtime environment — devcontainer auth/CLI
               // may only exist inside the container.
