@@ -261,7 +261,7 @@ export async function openInEditor(args: {
             > | null = null;
             if (tailscaleConfig.username == null) {
               try {
-                detectedInfo = await args.api?.server.detectTailscale({ force: false });
+                detectedInfo = (await args.api?.server.detectTailscale({ force: false })) ?? null;
               } catch {
                 // In production, detection failures must not bypass the remote-user requirement.
                 if (!isDevelopment) {
