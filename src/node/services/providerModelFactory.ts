@@ -506,8 +506,7 @@ function getOllamaProviderSettings(providerConfig: ProviderConfig): Record<strin
     settings.project = providerConfig.project;
   }
 
-  settings.compatibility =
-    providerConfig.compatibility === "compatible" ? "compatible" : "strict";
+  settings.compatibility = providerConfig.compatibility === "compatible" ? "compatible" : "strict";
 
   return settings;
 }

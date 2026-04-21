@@ -22,15 +22,15 @@ The goal is to reduce code size and maintenance cost without changing user-visib
 
 Current hotspots from a quick line-count scan:
 
-| File | Approx. LOC | Why it matters |
-| --- | ---: | --- |
-| `src/node/services/workspaceService.ts` | 7442 | Blends workspace lifecycle, runtime orchestration, archive handling, plan-file logic, and send-message coordination. |
-| `src/node/services/agentSession.ts` | 5337 | Owns startup recovery, retrying, compaction follow-ups, attachments, and agent switching. |
-| `src/browser/stores/WorkspaceStore.ts` | 4163 | Central browser state path for transcript, usage, activity, and hydration. |
-| `src/node/services/providerModelFactory.ts` | 2095 | Large provider branch tree with custom fetch, routing, auth, and provider-specific policy behavior. |
-| `src/browser/utils/messages/StreamingMessageAggregator.ts` | 3237 | Hot path for transcript/event merging and likely performance-sensitive. |
-| `src/browser/components/ProjectSidebar/ProjectSidebar.tsx` | 3065 | Large UI surface with multiple behaviors and memoization pressure. |
-| `src/browser/features/ChatInput/index.tsx` | 2840 | Large interaction surface with editing, attachments, submit rules, and tool affordances. |
+| File                                                       | Approx. LOC | Why it matters                                                                                                       |
+| ---------------------------------------------------------- | ----------: | -------------------------------------------------------------------------------------------------------------------- |
+| `src/node/services/workspaceService.ts`                    |        7442 | Blends workspace lifecycle, runtime orchestration, archive handling, plan-file logic, and send-message coordination. |
+| `src/node/services/agentSession.ts`                        |        5337 | Owns startup recovery, retrying, compaction follow-ups, attachments, and agent switching.                            |
+| `src/browser/stores/WorkspaceStore.ts`                     |        4163 | Central browser state path for transcript, usage, activity, and hydration.                                           |
+| `src/node/services/providerModelFactory.ts`                |        2095 | Large provider branch tree with custom fetch, routing, auth, and provider-specific policy behavior.                  |
+| `src/browser/utils/messages/StreamingMessageAggregator.ts` |        3237 | Hot path for transcript/event merging and likely performance-sensitive.                                              |
+| `src/browser/components/ProjectSidebar/ProjectSidebar.tsx` |        3065 | Large UI surface with multiple behaviors and memoization pressure.                                                   |
+| `src/browser/features/ChatInput/index.tsx`                 |        2840 | Large interaction surface with editing, attachments, submit rules, and tool affordances.                             |
 
 ### 2. Legacy compatibility branches need a focused audit
 

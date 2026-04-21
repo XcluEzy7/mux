@@ -9,10 +9,13 @@ import { log } from "@/node/services/log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getJwtService, type JwtProvider } from "@/node/services/auth/jwt";
-import type { ValidateSessionTokenOptions, ServerAuthSessionView } from "@/node/services/auth/types";
+import type {
+  ValidateSessionTokenOptions,
+  ServerAuthSessionView,
+} from "@/node/services/auth/types";
 
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
-const GITHUB_ACCESS_TOKEN_URL="https://github.com/login/oauth/access_token";
+const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_API_URL = "https://api.github.com/user";
 
 // Mux-owned OAuth app client ID used for server-mode owner login.
@@ -29,9 +32,9 @@ const SESSION_LAST_USED_PERSIST_INTERVAL_MS = 60 * 1000;
 // allocating unbounded pending flows and outbound GitHub requests.
 const MAX_CONCURRENT_GITHUB_DEVICE_FLOWS = 32;
 
-export const SERVER_AUTH_SESSION_COOKIE_NAME="mux_session";
-export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS=30 * 24 * 60 * 60;
-const SERVER_AUTH_SESSION_MAX_AGE_MS=SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000;
+export const SERVER_AUTH_SESSION_COOKIE_NAME = "mux_session";
+export const SERVER_AUTH_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const SERVER_AUTH_SESSION_MAX_AGE_MS = SERVER_AUTH_SESSION_MAX_AGE_SECONDS * 1000;
 
 interface PersistedServerAuthSession {
   id: string;
@@ -270,7 +273,10 @@ export class ServerAuthService {
   private githubDeviceFlowStartsInFlight = 0;
   private readonly jwtService: JwtProvider;
 
-  constructor(private readonly config: Config, jwtService?: JwtProvider) {
+  constructor(
+    private readonly config: Config,
+    jwtService?: JwtProvider
+  ) {
     this.sessionsFilePath = path.join(this.config.rootDir, "serverAuthSessions.json");
     this.jwtService = jwtService ?? getJwtService();
   }
@@ -785,7 +791,10 @@ export class ServerAuthService {
     const ipAddress = normalizeIpAddress(opts?.ipAddress);
 
     // Create a JWT for this session - token is the JWT string
-    const sessionToken = this.jwtService.createToken(sessionId, SERVER_AUTH_SESSION_MAX_AGE_SECONDS);
+    const sessionToken = this.jwtService.createToken(
+      sessionId,
+      SERVER_AUTH_SESSION_MAX_AGE_SECONDS
+    );
     const tokenHash = hashSessionToken(sessionToken);
 
     const session: PersistedServerAuthSession = {
