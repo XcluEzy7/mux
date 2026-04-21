@@ -345,4 +345,73 @@ describe("PR feed caching", () => {
       store.dispose();
     }
   });
+
+  it("refreshes the hook snapshot when status title or merge queue changes", async () => {
+    const workspaceId = "ws-feed-hook-status";
+    const initialFeed = makeFeed(workspaceId);
+    if (initialFeed.pr?.status == null) {
+      throw new Error("Expected makeFeed to include PR status");
+    }
+
+    const updatedFeed: WorkspacePullRequestFeed = {
+      ...initialFeed,
+      pr: {
+        ...initialFeed.pr,
+        detectedAt: initialFeed.pr.detectedAt + 1,
+        status: {
+          ...initialFeed.pr.status,
+          title: "Updated PR watcher details UI",
+          mergeQueueEntry: {
+            state: "QUEUED",
+            position: 2,
+          },
+          fetchedAt: initialFeed.pr.status.fetchedAt + 1,
+        },
+      },
+      fetchedAt: initialFeed.fetchedAt + 1,
+    };
+
+    const getPullRequestFeed = mock(() =>
+      Promise.resolve({ success: true as const, data: initialFeed })
+    );
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestFeed,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+      await sleep(0);
+
+      await (
+        store as unknown as { detectWorkspacePR: (id: string) => Promise<void> }
+      ).detectWorkspacePR(workspaceId);
+      const initialSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
+
+      getPullRequestFeed.mockImplementationOnce(() =>
+        Promise.resolve({ success: true as const, data: updatedFeed })
+      );
+
+      await (
+        store as unknown as { detectWorkspacePR: (id: string) => Promise<void> }
+      ).detectWorkspacePR(workspaceId);
+      const updatedSnapshot = store.getWorkspacePRHookSnapshot(workspaceId);
+
+      expect(updatedSnapshot).not.toBe(initialSnapshot);
+      expect(updatedSnapshot?.status?.title).toBe("Updated PR watcher details UI");
+      expect(updatedSnapshot?.status?.mergeQueueEntry).toEqual({
+        state: "QUEUED",
+        position: 2,
+      });
+    } finally {
+      store.dispose();
+    }
+  });
 });

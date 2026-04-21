@@ -68,6 +68,44 @@ interface WorkspacePRCacheEntry {
   loading: boolean;
 }
 
+function hasSameMergeQueueEntry(
+  previous: GitHubPRStatus["mergeQueueEntry"],
+  next: GitHubPRStatus["mergeQueueEntry"]
+): boolean {
+  const previousEntry = previous ?? null;
+  const nextEntry = next ?? null;
+
+  return (
+    previousEntry?.state === nextEntry?.state && previousEntry?.position === nextEntry?.position
+  );
+}
+
+function hasSameHookStatus(
+  previous: GitHubPRStatus | undefined,
+  next: GitHubPRStatus | undefined
+): boolean {
+  if (previous === next) {
+    return true;
+  }
+
+  if (previous == null || next == null) {
+    return previous == null && next == null;
+  }
+
+  return (
+    previous.state === next.state &&
+    previous.mergeable === next.mergeable &&
+    previous.mergeStateStatus === next.mergeStateStatus &&
+    previous.title === next.title &&
+    previous.isDraft === next.isDraft &&
+    previous.headRefName === next.headRefName &&
+    previous.baseRefName === next.baseRefName &&
+    previous.hasPendingChecks === next.hasPendingChecks &&
+    previous.hasFailedChecks === next.hasFailedChecks &&
+    hasSameMergeQueueEntry(previous.mergeQueueEntry, next.mergeQueueEntry)
+  );
+}
+
 /**
  * Store for GitHub PR status. Fetches status via gh CLI and caches results.
  */
@@ -240,22 +278,9 @@ export class PRStatusStore {
       return null;
     }
 
-    const previousStatus = existing?.status;
-    const nextStatus = cached.status;
-    const statusUnchanged =
-      previousStatus === nextStatus ||
-      (previousStatus != null &&
-        nextStatus != null &&
-        previousStatus.state === nextStatus.state &&
-        previousStatus.mergeable === nextStatus.mergeable &&
-        previousStatus.mergeStateStatus === nextStatus.mergeStateStatus &&
-        previousStatus.hasPendingChecks === nextStatus.hasPendingChecks &&
-        previousStatus.hasFailedChecks === nextStatus.hasFailedChecks &&
-        previousStatus.isDraft === nextStatus.isDraft);
-
     if (
       existing?.url === cached.prLink.url &&
-      statusUnchanged &&
+      hasSameHookStatus(existing?.status, cached.status) &&
       existing?.loading === cached.loading &&
       existing?.error === cached.error
     ) {
