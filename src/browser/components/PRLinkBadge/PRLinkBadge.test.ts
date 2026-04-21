@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { GitHubPRLinkWithStatus, GitHubPRStatus } from "@/common/types/links";
 import {
   buildRemediationStartMessage,
+  getHiddenThreadCount,
   getReviewerCategoryLabel,
   getStatusColorClass,
   getTooltipContent,
@@ -130,5 +131,29 @@ describe("reviewer attribution and remediation message", () => {
     expect(message).toContain("[coderabbitai (CodeRabbit)]");
     expect(message).toContain("src/browser/components/PRLinkBadge/PRLinkBadge.tsx:50");
     expect(message).toContain("Please guard this null case.");
+  });
+});
+
+describe("getHiddenThreadCount", () => {
+  it("returns the number of threads hidden past the visible cap", () => {
+    expect(
+      getHiddenThreadCount({
+        workspaceId: "ws-threads",
+        pr: makePRLink(),
+        reviewDecision: null,
+        checksSummary: {
+          hasPendingChecks: false,
+          hasFailedChecks: false,
+        },
+        reviewers: [],
+        threads: Array.from({ length: 10 }, (_, index) => ({
+          id: `thread-${index}`,
+          isResolved: false,
+          isOutdated: false,
+          comments: [],
+        })),
+        fetchedAt: Date.now(),
+      })
+    ).toBe(2);
   });
 });

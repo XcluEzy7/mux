@@ -17,8 +17,8 @@ import type {
   GitHubPRLinkWithStatus,
   PullRequestReviewComment,
   PullRequestReviewThread,
-  WorkspacePullRequestFeed,
 } from "@/common/types/links";
+import type { WorkspacePullRequestFeed } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
 import { Button } from "../Button/Button";
 import { Popover, PopoverContent, PopoverTrigger } from "../Popover/Popover";
@@ -29,6 +29,8 @@ interface PRLinkBadgeProps {
   feed?: WorkspacePullRequestFeed | null;
   onPushToFix?: (startMessage: string) => Promise<void>;
 }
+
+const MAX_VISIBLE_THREADS = 8;
 
 /**
  * Get status color class based on PR merge state.
@@ -224,6 +226,10 @@ function getActionableThreads(feed: WorkspacePullRequestFeed): PullRequestReview
   return feed.threads.filter((thread) => !thread.isResolved && !thread.isOutdated);
 }
 
+export function getHiddenThreadCount(feed: WorkspacePullRequestFeed): number {
+  return Math.max(feed.threads.length - MAX_VISIBLE_THREADS, 0);
+}
+
 export function buildRemediationStartMessage(feed: WorkspacePullRequestFeed): string {
   const actionableThreads = getActionableThreads(feed);
   const findings = actionableThreads
@@ -306,6 +312,7 @@ export function PRLinkBadge({ prLink, feed, onPushToFix }: PRLinkBadgeProps) {
   // Show pulse effect when refreshing with cached status (optimistic UI)
   const isRefreshing = prLink.loading && prLink.status != null;
   const actionableThreadCount = feed ? getActionableThreads(feed).length : 0;
+  const hiddenThreadCount = feed ? getHiddenThreadCount(feed) : 0;
 
   const handlePushToFix = async () => {
     if (!feed || !onPushToFix || isPushingToFix) {
@@ -411,9 +418,15 @@ export function PRLinkBadge({ prLink, feed, onPushToFix }: PRLinkBadgeProps) {
               <p className="text-muted text-[11px] uppercase">Review threads</p>
               {feed.threads.length > 0 ? (
                 <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
-                  {feed.threads.slice(0, 8).map((thread) => (
+                  {feed.threads.slice(0, MAX_VISIBLE_THREADS).map((thread) => (
                     <FeedThreadDetails key={thread.id} thread={thread} />
                   ))}
+                  {hiddenThreadCount > 0 ? (
+                    <p className="text-muted px-1 text-xs">
+                      And {hiddenThreadCount} more thread{hiddenThreadCount === 1 ? "" : "s"} not
+                      shown.
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="text-muted text-xs">No review threads detected yet.</p>

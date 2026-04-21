@@ -121,16 +121,3 @@ export interface PullRequestReviewThread {
   isOutdated: boolean;
   comments: PullRequestReviewComment[];
 }
-
-export interface WorkspacePullRequestFeed {
-  workspaceId: string;
-  pr: GitHubPRLinkWithStatus | null;
-  reviewDecision: string | null;
-  checksSummary: {
-    hasPendingChecks: boolean;
-    hasFailedChecks: boolean;
-  };
-  reviewers: PullRequestReviewerIdentity[];
-  threads: PullRequestReviewThread[];
-  fetchedAt: number;
-}
