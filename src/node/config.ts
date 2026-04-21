@@ -22,7 +22,10 @@ import type {
 import type {
   AppConfigOnDisk,
   BaseProviderConfig as ProviderConfig,
+  CustomTool,
   ProvidersConfig as CanonicalProvidersConfig,
+  ToolsConfig,
+  ToolsDefaultMode,
 } from "@/common/config/schemas";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -197,6 +200,116 @@ function parseOptionalStringArray(value: unknown): string[] | undefined {
 
   return value.filter((item): item is string => typeof item === "string");
 }
+const DEFAULT_TOOLS_DEFAULT_MODE: ToolsDefaultMode = "allow_all_except";
+
+function normalizeToolDefaultsMode(value: unknown): ToolsDefaultMode {
+  return value === "deny_all_except" ? "deny_all_except" : DEFAULT_TOOLS_DEFAULT_MODE;
+}
+
+function normalizeCustomToolProvenance(value: unknown): CustomTool["provenance"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as { links?: unknown; package?: unknown };
+  const links = parseOptionalStringArray(record.links)
+    ?.map((link) => link.trim())
+    .filter((link) => link.length > 0);
+  const packageName = parseOptionalNonEmptyString(record.package);
+
+  if (!links?.length && !packageName) {
+    return undefined;
+  }
+
+  return {
+    links,
+    package: packageName,
+  };
+}
+
+function normalizeCustomTool(value: unknown): CustomTool | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as {
+    id?: unknown;
+    label?: unknown;
+    command?: unknown;
+    args?: unknown;
+    instructions?: unknown;
+    provenance?: unknown;
+    enabled?: unknown;
+  };
+
+  const id = parseOptionalNonEmptyString(record.id);
+  const label = parseOptionalNonEmptyString(record.label);
+  const command = parseOptionalNonEmptyString(record.command);
+  if (!id || !label || !command) {
+    return null;
+  }
+
+  // Preserve intentional empty argv entries (""), which are meaningful for the
+  // quote-aware args editor round-trip.
+  const args = parseOptionalStringArray(record.args) ?? [];
+  const instructions = parseOptionalNonEmptyString(record.instructions);
+  const provenance = normalizeCustomToolProvenance(record.provenance);
+
+  return {
+    id,
+    label,
+    command,
+    args,
+    instructions,
+    provenance,
+    enabled: parseOptionalBoolean(record.enabled) ?? true,
+  };
+}
+
+function normalizeToolsConfig(value: unknown): ToolsConfig {
+  const defaultsRecord =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? ((value as { defaults?: unknown }).defaults as
+          | { mode?: unknown; toolNames?: unknown }
+          | undefined)
+      : undefined;
+
+  const rawCustom =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { custom?: unknown }).custom
+      : undefined;
+
+  const normalizedCustom = Array.isArray(rawCustom)
+    ? rawCustom
+        .map((entry) => normalizeCustomTool(entry))
+        .filter((entry): entry is CustomTool => entry !== null)
+    : [];
+
+  const dedupedCustom: CustomTool[] = [];
+  const seenIds = new Set<string>();
+  for (const tool of normalizedCustom) {
+    if (seenIds.has(tool.id)) {
+      continue;
+    }
+    seenIds.add(tool.id);
+    dedupedCustom.push(tool);
+  }
+
+  return {
+    defaults: {
+      mode: normalizeToolDefaultsMode(defaultsRecord?.mode),
+      toolNames: Array.from(
+        new Set(
+          (parseOptionalStringArray(defaultsRecord?.toolNames) ?? [])
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0)
+        )
+      ),
+    },
+    custom: dedupedCustom,
+  };
+}
+
 function parseOptionalStringRecord(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -439,6 +552,10 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private configFileWatcher: fs.FSWatcher | null = null;
+  private configFileWatchInitialized = false;
+  private pendingSelfWriteSignature: string | null = null;
+  private watchedConfigFileSignature: string | null = null;
   private readonly emitter = new EventEmitter();
 
   constructor(rootDir?: string) {
@@ -451,10 +568,128 @@ export class Config {
   }
 
   onConfigChanged(callback: () => void): () => void {
+    this.ensureConfigFileWatch();
     this.emitter.on("configChanged", callback);
     return () => {
       this.emitter.off("configChanged", callback);
+      if (this.emitter.listenerCount("configChanged") === 0) {
+        this.stopConfigFileWatch();
+      }
     };
+  }
+
+  dispose(): void {
+    this.stopConfigFileWatch();
+  }
+
+  private stopConfigFileWatch(): void {
+    // Reset pending self-write state so each watcher session starts clean.
+    this.pendingSelfWriteSignature = null;
+
+    if (!this.configFileWatcher) {
+      return;
+    }
+
+    this.configFileWatcher.close();
+    this.configFileWatcher = null;
+    this.watchedConfigFileSignature = null;
+  }
+
+  private captureConfigFileSignature(): string | null {
+    try {
+      const stats = fs.statSync(this.configFile);
+      return `${stats.size}:${stats.mtimeMs}`;
+    } catch {
+      return null;
+    }
+  }
+
+  private markPendingSelfWrite(): void {
+    // Only track self-write signatures while a watcher is active. Saves that happen
+    // before watch startup should not leave stale markers that can suppress later
+    // external delete/rename events (changedFileSignature === null).
+    if (!this.configFileWatcher) {
+      return;
+    }
+
+    this.pendingSelfWriteSignature = this.captureConfigFileSignature();
+  }
+
+  private ensureConfigFileWatch(): void {
+    if (this.configFileWatcher) {
+      return;
+    }
+
+    const watchParentDir = () => {
+      const parentDir = path.dirname(this.configFile);
+
+      try {
+        this.watchedConfigFileSignature = this.captureConfigFileSignature();
+        this.configFileWatcher = fs.watch(parentDir, (_eventType, filename) => {
+          const changedFileName = filename?.toString();
+          const configFileName = path.basename(this.configFile);
+          const changedFileSignature = this.captureConfigFileSignature();
+
+          if (changedFileName && changedFileName !== configFileName) {
+            return;
+          }
+
+          if (this.pendingSelfWriteSignature !== null && changedFileSignature === null) {
+            // Clear stale self-write suppression. Keep processing filename-targeted
+            // events because a null signature can be the only delete/rename signal.
+            // Missing-filename events are often transient parent-dir noise during
+            // our own atomic save, so keep ignoring those.
+            this.pendingSelfWriteSignature = null;
+            if (!changedFileName) {
+              return;
+            }
+          }
+
+          if (!changedFileName && changedFileSignature === this.watchedConfigFileSignature) {
+            return;
+          }
+
+          if (
+            this.pendingSelfWriteSignature !== null &&
+            changedFileSignature !== null &&
+            changedFileSignature === this.pendingSelfWriteSignature
+          ) {
+            this.pendingSelfWriteSignature = null;
+            this.watchedConfigFileSignature = changedFileSignature;
+            return;
+          }
+
+          this.pendingSelfWriteSignature = null;
+          this.watchedConfigFileSignature = changedFileSignature;
+          this.notifyConfigChanged();
+        });
+      } catch (error) {
+        log.warn("Failed to watch config parent directory", {
+          configFile: this.configFile,
+          parentDir,
+          error,
+        });
+      }
+    };
+
+    if (this.configFileWatchInitialized) {
+      watchParentDir();
+      return;
+    }
+
+    this.configFileWatchInitialized = true;
+    if (fs.existsSync(this.configFile)) {
+      watchParentDir();
+      return;
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(this.configFile), { recursive: true });
+    } catch (error) {
+      log.debug("Failed to ensure config parent directory before watch", { error });
+    }
+
+    watchParentDir();
   }
 
   private notifyConfigChanged(): void {
@@ -651,6 +886,7 @@ export class Config {
             writeFileAtomic.sync(this.configFile, JSON.stringify(parsed, null, 2), {
               encoding: "utf-8",
             });
+            this.markPendingSelfWrite();
           } catch (error) {
             // Keep startup resilient even if persisting migration fails.
             log.warn("Failed to persist migrated config", { error });
@@ -681,6 +917,7 @@ export class Config {
           });
         const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
+        const tools = normalizeToolsConfig(parsed.tools);
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
         const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
@@ -741,6 +978,7 @@ export class Config {
           serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
           defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
           viewedSplashScreens: parsed.viewedSplashScreens,
+          tools,
           layoutPresets,
           taskSettings,
           muxGatewayEnabled,
@@ -783,6 +1021,7 @@ export class Config {
     // Return default config
     return {
       projects: new Map(),
+      tools: normalizeToolsConfig(undefined),
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
       subagentAiDefaults: {},
@@ -808,6 +1047,15 @@ export class Config {
         ),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
+
+      const normalizedToolsConfig = normalizeToolsConfig(config.tools);
+      if (
+        normalizedToolsConfig.defaults.mode !== DEFAULT_TOOLS_DEFAULT_MODE ||
+        normalizedToolsConfig.defaults.toolNames.length > 0 ||
+        normalizedToolsConfig.custom.length > 0
+      ) {
+        data.tools = normalizedToolsConfig;
+      }
 
       const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
       if (muxGatewayEnabled !== undefined) {
@@ -1006,6 +1254,7 @@ export class Config {
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
+      this.markPendingSelfWrite();
     } catch (error) {
       log.error("Error saving config:", error);
     }

@@ -16,6 +16,7 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { getExperimentKey, type ExperimentId } from "@/common/constants/experiments";
 import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
+import type { ToolsConfig } from "@/common/config/schemas";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
 import type { TaskSettings } from "@/common/types/tasks";
@@ -108,6 +109,8 @@ interface SetupSettingsStoryOptions {
   serverAuthSessions?: ServerAuthSession[];
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
+  /** Initial tools settings for config.getConfig */
+  toolsConfig?: ToolsConfig;
 }
 
 /** Setup basic workspace for settings stories. */
@@ -132,6 +135,7 @@ export function setupSettingsStory(options: SetupSettingsStoryOptions): APIClien
     taskSettings: options.taskSettings,
     serverAuthSessions: options.serverAuthSessions,
     layoutPresets: options.layoutPresets,
+    toolsConfig: options.toolsConfig,
   });
 }
 

@@ -1,3 +1,4 @@
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -25,6 +26,7 @@ describe("Config", () => {
 
   afterEach(() => {
     // Clean up temporary directory
+    config.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -465,8 +467,8 @@ describe("Config", () => {
       });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
-        agentAiDefaults?: Record<string, { modelString?: string }>;
-        subagentAiDefaults?: Record<string, { modelString?: string }>;
+        agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
+        subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
       };
 
       expect(raw.agentAiDefaults).toEqual({
@@ -912,6 +914,332 @@ describe("Config", () => {
       });
 
       expect(notifications).toBe(1);
+    });
+  });
+
+  it("emits when config.json is modified externally", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    let notificationCount = 0;
+    const notificationPromise = new Promise<void>((resolve) => {
+      const unsubscribe = config.onConfigChanged(() => {
+        notificationCount += 1;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    fs.writeFileSync(configFile, JSON.stringify({ routePriority: ["direct"] }));
+
+    await Promise.race([
+      notificationPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for external config change")), 2000)
+      ),
+    ]);
+
+    expect(notificationCount).toBe(1);
+  });
+
+  it("ignores missing-filename parent-dir events when config signature is unchanged", () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      fs.writeFileSync(path.join(tempDir, "other.json"), JSON.stringify({ changed: true }));
+      watchCallback?.("change", null);
+
+      expect(notifications).toBe(0);
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
+  it("does not swallow immediate external edits after a self save", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    let notificationCount = 0;
+    const notificationPromise = new Promise<void>((resolve) => {
+      const unsubscribe = config.onConfigChanged(() => {
+        notificationCount += 1;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    const loaded = config.loadConfigOrDefault();
+    loaded.routePriority = ["direct"];
+    await config.saveConfig(loaded);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(notificationCount).toBe(0);
+
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({ projects: [], routePriority: ["openai:gpt-4o"] })
+    );
+
+    await Promise.race([
+      notificationPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for external config change")), 2000)
+      ),
+    ]);
+
+    expect(notificationCount).toBe(1);
+  });
+
+  it("does not ignore null-signature events after handling a self-write event", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      fs.rmSync(configFile, { force: true });
+
+      watchCallback?.("rename", null);
+      expect(notifications).toBe(0);
+
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
+  it("does not swallow the first null-signature event while self-write suppression is pending", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      fs.rmSync(configFile, { force: true });
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
+  it("does not ignore external null-signature events when a save happened before watcher start", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    const loaded = config.loadConfigOrDefault();
+    loaded.routePriority = ["direct"];
+    await config.saveConfig(loaded);
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      fs.rmSync(configFile, { force: true });
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+      unsubscribe();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
+  it("clears pending self-write state when config watcher restarts", async () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(configFile, JSON.stringify({ projects: [] }));
+
+    type WatchCallback = (
+      eventType: fs.WatchEventType,
+      filename: string | Buffer<ArrayBufferLike> | null
+    ) => void;
+    const isWatchCallback = (value: unknown): value is WatchCallback => typeof value === "function";
+
+    const watchSpy = spyOn(fs, "watch");
+
+    try {
+      let notifications = 0;
+
+      const unsubscribeFirst = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+      expect(watchSpy.mock.calls.length).toBe(1);
+
+      const loaded = config.loadConfigOrDefault();
+      loaded.routePriority = ["direct"];
+      await config.saveConfig(loaded);
+
+      // Stop the watcher before its self-write event is processed.
+      unsubscribeFirst();
+
+      const unsubscribeSecond = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+      expect(watchSpy.mock.calls.length).toBe(2);
+
+      const latestWatchCall = watchSpy.mock.calls.at(-1);
+      expect(latestWatchCall).toBeDefined();
+
+      const optionsOrListener = latestWatchCall?.[1];
+      const watchCallback = isWatchCallback(optionsOrListener) ? optionsOrListener : null;
+      expect(watchCallback).not.toBeNull();
+
+      fs.rmSync(configFile, { force: true });
+      watchCallback?.("rename", path.basename(configFile));
+
+      expect(notifications).toBe(1);
+      unsubscribeSecond();
+    } finally {
+      watchSpy.mockRestore();
+    }
+  });
+
+  describe("tools config", () => {
+    it("normalizes invalid tools config into defaults", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          tools: {
+            defaults: { mode: "bad-mode", toolNames: ["bash", "", "bash"] },
+            custom: [
+              { id: "tool-1", label: "Tool 1", command: "npx", enabled: true },
+              { id: "tool-1", label: "duplicate", command: "ignored", enabled: true },
+              { id: "", label: "missing-id", command: "npx", enabled: true },
+            ],
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.tools).toEqual({
+        defaults: { mode: "allow_all_except", toolNames: ["bash"] },
+        custom: [{ id: "tool-1", label: "Tool 1", command: "npx", args: [], enabled: true }],
+      });
+    });
+  });
+
+  it("normalizes custom tool provenance links while preserving intentional empty args", () => {
+    const configFile = path.join(tempDir, "config.json");
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({
+        tools: {
+          defaults: { mode: "allow_all_except", toolNames: [] },
+          custom: [
+            {
+              id: "tool-1",
+              label: "Tool 1",
+              command: "npx",
+              args: ["--flag", "", "tail"],
+              enabled: true,
+              provenance: {
+                links: [" https://docs.example.com ", "", "   "],
+              },
+            },
+          ],
+        },
+      })
+    );
+
+    const loaded = config.loadConfigOrDefault();
+
+    expect(loaded.tools?.custom[0]).toMatchObject({
+      id: "tool-1",
+      args: ["--flag", "", "tail"],
+      provenance: {
+        links: ["https://docs.example.com"],
+      },
     });
   });
 

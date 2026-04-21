@@ -30,6 +30,35 @@ export const SubagentAiDefaultsEntrySchema = z.object({
 
 export const SubagentAiDefaultsSchema = z.record(AgentIdSchema, SubagentAiDefaultsEntrySchema);
 
+export const ToolsDefaultModeSchema = z.enum(["allow_all_except", "deny_all_except"]);
+
+export const ToolsDefaultsSchema = z.object({
+  mode: ToolsDefaultModeSchema,
+  toolNames: z.array(z.string()),
+});
+
+export const CustomToolProvenanceSchema = z
+  .object({
+    links: z.array(z.string()).optional(),
+    package: z.string().optional(),
+  })
+  .optional();
+
+export const CustomToolSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  command: z.string(),
+  args: z.array(z.string()).default([]),
+  instructions: z.string().optional(),
+  provenance: CustomToolProvenanceSchema,
+  enabled: z.boolean().default(true),
+});
+
+export const ToolsConfigSchema = z.object({
+  defaults: ToolsDefaultsSchema,
+  custom: z.array(CustomToolSchema),
+});
+
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
@@ -46,6 +75,7 @@ export const AppConfigOnDiskSchema = z
     serverAuthGithubOwner: z.string().optional(),
     defaultProjectDir: z.string().optional(),
     viewedSplashScreens: z.array(z.string()).optional(),
+    tools: ToolsConfigSchema.optional(),
     featureFlagOverrides: z.record(z.string(), FeatureFlagOverrideSchema).optional(),
     layoutPresets: z.unknown().optional(),
     taskSettings: TaskSettingsSchema.optional(),
@@ -97,6 +127,11 @@ export type AgentAiDefaultsEntry = z.infer<typeof AgentAiDefaultsEntrySchema>;
 export type AgentAiDefaults = z.infer<typeof AgentAiDefaultsSchema>;
 export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySchema>;
 export type SubagentAiDefaults = z.infer<typeof SubagentAiDefaultsSchema>;
+export type ToolsDefaultMode = z.infer<typeof ToolsDefaultModeSchema>;
+export type ToolsDefaults = z.infer<typeof ToolsDefaultsSchema>;
+export type CustomToolProvenance = z.infer<typeof CustomToolProvenanceSchema>;
+export type CustomTool = z.infer<typeof CustomToolSchema>;
+export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
 

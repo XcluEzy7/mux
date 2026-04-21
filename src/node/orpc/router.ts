@@ -12,6 +12,7 @@ import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import type { ToolsConfig } from "@/common/config/schemas";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -191,6 +192,54 @@ function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): numb
   assert(Number.isInteger(value), "Advisor max output tokens must be an integer");
   assert(value > 0, "Advisor max output tokens must be positive");
   return value;
+}
+
+export function normalizeToolsConfigForSave(tools: ToolsConfig): ToolsConfig {
+  const seenCustomToolIds = new Set<string>();
+
+  return {
+    defaults: {
+      mode: tools.defaults.mode === "deny_all_except" ? "deny_all_except" : "allow_all_except",
+      toolNames: tools.defaults.toolNames.filter((name) => name.trim().length > 0),
+    },
+    custom: tools.custom
+      .filter((tool) => {
+        const trimmedId = tool.id.trim();
+        if (
+          trimmedId.length === 0 ||
+          tool.label.trim().length === 0 ||
+          tool.command.trim().length === 0
+        ) {
+          return false;
+        }
+
+        // Match config-load normalization so save/update does not silently drop a
+        // different duplicate on the next fetch.
+        if (seenCustomToolIds.has(trimmedId)) {
+          return false;
+        }
+        seenCustomToolIds.add(trimmedId);
+        return true;
+      })
+      .map((tool) => ({
+        ...tool,
+        id: tool.id.trim(),
+        label: tool.label.trim(),
+        command: tool.command.trim(),
+        // Preserve intentionally-empty argv entries (e.g. quoted "") so
+        // the quote-aware args editor round-trips exactly.
+        args: tool.args.filter((arg): arg is string => typeof arg === "string"),
+        instructions: tool.instructions?.trim() ? tool.instructions.trim() : undefined,
+        provenance: tool.provenance
+          ? {
+              links: tool.provenance.links
+                ?.map((link) => link.trim())
+                .filter((link) => link.length > 0),
+              package: tool.provenance.package?.trim() ? tool.provenance.package.trim() : undefined,
+            }
+          : undefined,
+      })),
+  };
 }
 
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
@@ -660,6 +709,10 @@ export const router = (authToken?: string) => {
           const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            tools: config.tools ?? {
+              defaults: { mode: "allow_all_except", toolNames: [] },
+              custom: [],
+            },
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
             routePriority: config.routePriority,
@@ -776,6 +829,17 @@ export const router = (authToken?: string) => {
               // Legacy fields (downgrade compatibility)
               subagentAiDefaults:
                 Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
+            };
+          });
+        }),
+      updateToolsConfig: t
+        .input(schemas.config.updateToolsConfig.input)
+        .output(schemas.config.updateToolsConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            return {
+              ...config,
+              tools: normalizeToolsConfigForSave(input.tools),
             };
           });
         }),
@@ -2105,7 +2169,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const servers = await context.mcpConfigService.listServers(
             input.projectPath,
-            isTrustedProjectPath(context, input.projectPath)
+            isTrustedProjectPath(context, input.projectPath),
+            input.includeSyntheticCustomToolServers ?? true
           );
 
           if (!context.policyService.isEnforced()) {

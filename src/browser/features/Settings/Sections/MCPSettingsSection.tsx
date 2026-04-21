@@ -28,6 +28,7 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
+import type { CustomTool } from "@/common/config/schemas";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";
 import type { MCPOAuthPendingServerConfig } from "@/common/types/mcpOauth";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
@@ -40,6 +41,57 @@ import {
 import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
+import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
+import { buildSyntheticCustomToolCommand } from "@/common/utils/customToolMcp";
+
+export function buildSyntheticCustomToolServerCommandMap(
+  customTools: CustomTool[] | undefined
+): Record<string, string> {
+  if (!customTools || customTools.length === 0) {
+    return {};
+  }
+
+  const map: Record<string, string> = {};
+  for (const tool of customTools) {
+    if (!tool.enabled) {
+      continue;
+    }
+
+    const trimmedId = tool.id.trim();
+    if (trimmedId.length === 0) {
+      continue;
+    }
+
+    map[`${CUSTOM_TOOL_MCP_SERVER_PREFIX}${trimmedId}`] = buildSyntheticCustomToolCommand(
+      tool.command,
+      tool.args
+    );
+  }
+
+  return map;
+}
+
+export function shouldHideSyntheticCustomToolServer(
+  serverName: string,
+  serverInfo: MCPServerInfo,
+  syntheticServerCommandMap: Record<string, string>
+): boolean {
+  if (!serverName.startsWith(CUSTOM_TOOL_MCP_SERVER_PREFIX)) {
+    return false;
+  }
+
+  const expectedCommand = syntheticServerCommandMap[serverName];
+  if (!expectedCommand) {
+    return false;
+  }
+
+  return (
+    serverInfo.transport === "stdio" &&
+    serverInfo.command === expectedCommand &&
+    serverInfo.disabled === false &&
+    serverInfo.toolAllowlist === undefined
+  );
+}
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -798,7 +850,7 @@ export const MCPSettingsSection: React.FC = () => {
     if (!api) return;
     setLoading(true);
     try {
-      const mcpResult = await api.mcp.list({});
+      const mcpResult = await api.mcp.list({ includeSyntheticCustomToolServers: false });
       setServers(mcpResult ?? {});
       setError(null);
     } catch (err) {
@@ -1120,6 +1172,8 @@ export const MCPSettingsSection: React.FC = () => {
         }).validation
       : { errors: [], warnings: [] };
 
+  const visibleServers: Record<string, MCPServerInfo> = servers;
+
   return (
     <div className="space-y-6">
       {/* Intro */}
@@ -1154,10 +1208,10 @@ export const MCPSettingsSection: React.FC = () => {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading servers…
                 </div>
-              ) : Object.keys(servers).length === 0 ? (
+              ) : Object.keys(visibleServers).length === 0 ? (
                 <p className="text-muted py-2 text-sm">No MCP servers configured yet.</p>
               ) : (
-                Object.entries(servers).map(([name, entry]) => {
+                Object.entries(visibleServers).map(([name, entry]) => {
                   const isTesting = testingServer === name;
                   const cached = testCache[name];
                   const isEditing = editing?.name === name;

@@ -64,6 +64,112 @@ describe("MCPConfigService", () => {
     });
   });
 
+  test("listServers includes enabled custom tools as synthetic stdio MCP servers", async () => {
+    await config.editConfig((cfg) => {
+      cfg.tools = {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "echo",
+            label: "Echo",
+            command: "npx",
+            args: ["@acme/echo", "--prompt", "it's"],
+            enabled: true,
+          },
+          {
+            id: "disabled",
+            label: "Disabled",
+            command: "npx",
+            args: ["@acme/disabled"],
+            enabled: false,
+          },
+          {
+            id: "blank-command",
+            label: "Blank Command",
+            command: "   ",
+            args: ["@acme/blank"],
+            enabled: true,
+          },
+        ],
+      };
+      return cfg;
+    });
+
+    const servers = await configService.listServers();
+
+    expect(servers).toMatchObject({
+      "custom-tool:echo": {
+        transport: "stdio",
+        disabled: false,
+        command: `'npx' '@acme/echo' '--prompt' 'it'"'"'s'`,
+      },
+    });
+    expect(servers["custom-tool:disabled"]).toBeUndefined();
+    expect(servers["custom-tool:blank-command"]).toBeUndefined();
+  });
+
+  test("listServers can omit synthetic custom-tool servers for settings editing", async () => {
+    await config.editConfig((cfg) => {
+      cfg.tools = {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "echo",
+            label: "Echo",
+            command: "npx",
+            args: ["@acme/echo"],
+            enabled: true,
+          },
+        ],
+      };
+      return cfg;
+    });
+
+    await configService.addServer("custom-tool:echo", {
+      transport: "stdio",
+      command: "user-defined-server",
+    });
+
+    const servers = await configService.listServers(undefined, false, false);
+
+    expect(servers["custom-tool:echo"]).toEqual({
+      transport: "stdio",
+      command: "user-defined-server",
+      disabled: false,
+    });
+  });
+
+  test("listServers does not let synthetic custom-tool servers overwrite explicit servers", async () => {
+    await configService.addServer("custom-tool:echo", {
+      transport: "stdio",
+      command: "user-defined-server",
+    });
+
+    await config.editConfig((cfg) => {
+      cfg.tools = {
+        defaults: { mode: "allow_all_except", toolNames: [] },
+        custom: [
+          {
+            id: "echo",
+            label: "Echo",
+            command: "npx",
+            args: ["@acme/echo"],
+            enabled: true,
+          },
+        ],
+      };
+      return cfg;
+    });
+
+    const servers = await configService.listServers();
+
+    expect(servers["custom-tool:echo"]).toEqual({
+      transport: "stdio",
+      command: "user-defined-server",
+      disabled: false,
+    });
+  });
+
   test("listServers ignores repo overrides for untrusted projects", async () => {
     await configService.addServer("global-only", {
       transport: "stdio",
