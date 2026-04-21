@@ -1041,10 +1041,11 @@ describe("Config", () => {
       loaded.routePriority = ["direct"];
       await config.saveConfig(loaded);
 
-      watchCallback?.("change", path.basename(configFile));
+      fs.rmSync(configFile, { force: true });
+
+      watchCallback?.("rename", null);
       expect(notifications).toBe(0);
 
-      fs.rmSync(configFile, { force: true });
       watchCallback?.("rename", path.basename(configFile));
 
       expect(notifications).toBe(1);
