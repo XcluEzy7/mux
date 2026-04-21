@@ -2701,6 +2701,8 @@ describe("WorkspaceService getPullRequestFeed", () => {
       script: string,
       options?: {
         timeout_secs?: number | null;
+        cwdMode?: "workspace" | "repo-root";
+        repoRootProjectPath?: string | null;
       }
     ) => Promise<Result<BashToolResult>>
   ): {
@@ -2712,6 +2714,34 @@ describe("WorkspaceService getPullRequestFeed", () => {
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: mock(() => "test-id"),
       findWorkspace: mock(() => null),
+      getAllWorkspaceMetadata: mock(() =>
+        Promise.resolve([
+          {
+            id: "ws-no-pr",
+            name: "ws-no-pr",
+            projectName: "project",
+            projectPath: "/tmp/project",
+            namedWorkspacePath: "/tmp/project/workspaces/ws-no-pr",
+            runtimeConfig: { type: "local" as const },
+          },
+          {
+            id: "ws-pr",
+            name: "ws-pr",
+            projectName: "project",
+            projectPath: "/tmp/project",
+            namedWorkspacePath: "/tmp/project/workspaces/ws-pr",
+            runtimeConfig: { type: "local" as const },
+          },
+          {
+            id: "ws-invalid-url",
+            name: "ws-invalid-url",
+            projectName: "project",
+            projectPath: "/tmp/project",
+            namedWorkspacePath: "/tmp/project/workspaces/ws-invalid-url",
+            runtimeConfig: { type: "local" as const },
+          },
+        ])
+      ),
     };
 
     const aiService: AIService = {

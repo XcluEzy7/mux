@@ -318,6 +318,7 @@ export class PRStatusStore {
         loading: false,
         fetchedAt: feed.fetchedAt,
       });
+      prStatusLRU.remove(workspaceId);
       return;
     }
 

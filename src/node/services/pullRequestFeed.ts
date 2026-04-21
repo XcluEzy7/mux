@@ -18,6 +18,7 @@ const REVIEWER_CATEGORY_BY_BOT_LOGIN: Record<
   coderabbitai: "coderabbit",
   "greptile[bot]": "greptile",
   "greptile-ai[bot]": "greptile",
+  "greptile-apps[bot]": "greptile",
 };
 
 export const GH_PR_VIEW_JSON_FIELDS = [
@@ -94,7 +95,9 @@ export function summarizeStatusCheckRollup(raw: unknown): {
     }
 
     if (!conclusion) {
-      hasPendingChecks = true;
+      if (status !== "COMPLETED") {
+        hasPendingChecks = true;
+      }
       continue;
     }
 

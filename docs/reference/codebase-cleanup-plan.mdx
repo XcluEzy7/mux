@@ -81,7 +81,7 @@ This is a good candidate for adapter extraction without changing behavior.
 
 ## Recommended workstreams
 
-## Workstream 1: Dead-code and compatibility audit
+### Workstream 1: Dead-code and compatibility audit
 
 ### Scope
 
@@ -100,7 +100,7 @@ This is a good candidate for adapter extraction without changing behavior.
 - No unsupported legacy branch remains without a corresponding test or migration note.
 - Reduced branch count in `workspaceService.ts` and `agentSession.ts`.
 
-## Workstream 2: Monolith decomposition
+### Workstream 2: Monolith decomposition
 
 ### Scope
 
@@ -133,7 +133,7 @@ Split by responsibility, not by arbitrary size targets:
 - Reduced file size and import surface in the top-level orchestrators.
 - Fewer unrelated responsibilities per file.
 
-## Workstream 3: Browser-state and rendering optimization
+### Workstream 3: Browser-state and rendering optimization
 
 ### Scope
 
@@ -154,7 +154,7 @@ Split by responsibility, not by arbitrary size targets:
 - Less work per transcript event.
 - No new `useMemo` / `useCallback` cargo-culting; prefer state-shape cleanup and subscription colocation.
 
-## Workstream 4: Suppression and test cleanup
+### Workstream 4: Suppression and test cleanup
 
 ### Scope
 
@@ -173,7 +173,7 @@ Split by responsibility, not by arbitrary size targets:
 - Smaller suppression footprint.
 - Better signal from lint and type failures.
 
-## Workstream 5: Generated and embedded content review
+### Workstream 5: Generated and embedded content review
 
 ### Scope
 
