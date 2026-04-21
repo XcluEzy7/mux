@@ -1087,6 +1087,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(WorkspacePullRequestFeedSchema, z.string()),
   },
+  getPullRequestFeedBatch: {
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: z.record(z.string(), ResultSchema(WorkspacePullRequestFeedSchema, z.string())),
+  },
   archiveMergedInProject: {
     input: z.object({ projectPath: z.string() }),
     output: ResultSchema(

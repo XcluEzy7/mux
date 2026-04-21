@@ -1552,6 +1552,45 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             gitStatus: row.gitStatus ? { ...row.gitStatus } : row.gitStatus,
           }))
         ),
+      getPullRequestFeed: (input: { workspaceId: string }) =>
+        Promise.resolve({
+          success: true as const,
+          data: {
+            workspaceId: input.workspaceId,
+            pr: null,
+            reviewDecision: null,
+            checksSummary: {
+              hasPendingChecks: false,
+              hasFailedChecks: false,
+            },
+            reviewers: [],
+            threads: [],
+            fetchedAt: Date.now(),
+          },
+        }),
+      getPullRequestFeedBatch: (input: { workspaceIds: string[] }) =>
+        Promise.resolve(
+          Object.fromEntries(
+            input.workspaceIds.map((workspaceId) => [
+              workspaceId,
+              {
+                success: true as const,
+                data: {
+                  workspaceId,
+                  pr: null,
+                  reviewDecision: null,
+                  checksSummary: {
+                    hasPendingChecks: false,
+                    hasFailedChecks: false,
+                  },
+                  reviewers: [],
+                  threads: [],
+                  fetchedAt: Date.now(),
+                },
+              },
+            ])
+          )
+        ),
       stopRuntime: () => Promise.resolve({ success: true as const, data: undefined }),
       onChat: async function* (input: { workspaceId: string }, options?: { signal?: AbortSignal }) {
         if (!onChat) {

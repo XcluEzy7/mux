@@ -4616,12 +4616,10 @@ export class WorkspaceService extends EventEmitter {
     return results;
   }
 
-  async getPullRequestFeed(workspaceId: string): Promise<Result<WorkspacePullRequestFeed>> {
-    const normalizedWorkspaceId = workspaceId.trim();
-    if (!normalizedWorkspaceId) {
-      return Err("workspaceId is required");
-    }
-
+  private async buildPullRequestFeed(
+    normalizedWorkspaceId: string,
+    workspaceMetadata: WorkspaceMetadata
+  ): Promise<Result<WorkspacePullRequestFeed>> {
     const fetchedAt = Date.now();
     const baseResponse: Omit<
       WorkspacePullRequestFeed,
@@ -4636,14 +4634,6 @@ export class WorkspaceService extends EventEmitter {
     };
 
     try {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const workspaceMetadata = allMetadata.find(
-        (metadata) => metadata.id === normalizedWorkspaceId
-      );
-      if (!workspaceMetadata) {
-        return Err(`Workspace not found: ${normalizedWorkspaceId}`);
-      }
-
       const viewResult = await this.executeBash(
         normalizedWorkspaceId,
         `gh pr view --json ${GH_PR_VIEW_JSON_FIELDS} 2>/dev/null || echo '{"no_pr":true}'`,
@@ -4756,6 +4746,70 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       return Err(getErrorMessage(error));
     }
+  }
+
+  async getPullRequestFeed(workspaceId: string): Promise<Result<WorkspacePullRequestFeed>> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId) {
+      return Err("workspaceId is required");
+    }
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const workspaceMetadata = allMetadata.find(
+        (metadata) => metadata.id === normalizedWorkspaceId
+      );
+      if (!workspaceMetadata) {
+        return Err(`Workspace not found: ${normalizedWorkspaceId}`);
+      }
+
+      return this.buildPullRequestFeed(normalizedWorkspaceId, workspaceMetadata);
+    } catch (error) {
+      return Err(getErrorMessage(error));
+    }
+  }
+
+  async getPullRequestFeedBatch(
+    workspaceIds: string[]
+  ): Promise<Record<string, Result<WorkspacePullRequestFeed>>> {
+    const normalizedWorkspaceIds = Array.from(
+      new Set(workspaceIds.map((workspaceId) => workspaceId.trim()).filter((workspaceId) => workspaceId))
+    );
+    const results: Record<string, Result<WorkspacePullRequestFeed>> = {};
+
+    if (normalizedWorkspaceIds.length === 0) {
+      return results;
+    }
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
+
+      const batchResults = await Promise.all(
+        normalizedWorkspaceIds.map(async (workspaceId) => {
+          const workspaceMetadata = metadataById.get(workspaceId);
+          if (!workspaceMetadata) {
+            return [workspaceId, Err(`Workspace not found: ${workspaceId}`)] as const;
+          }
+
+          return [
+            workspaceId,
+            await this.buildPullRequestFeed(workspaceId, workspaceMetadata),
+          ] as const;
+        })
+      );
+
+      for (const [workspaceId, result] of batchResults) {
+        results[workspaceId] = result;
+      }
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      for (const workspaceId of normalizedWorkspaceIds) {
+        results[workspaceId] = Err(errorMessage);
+      }
+    }
+
+    return results;
   }
 
   /**

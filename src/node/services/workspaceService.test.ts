@@ -2911,6 +2911,61 @@ describe("WorkspaceService getPullRequestFeed", () => {
       expect(result.error).toContain("Invalid PR URL");
     }
   });
+
+  test("batches multiple PR feed lookups behind one metadata load", async () => {
+    const { workspaceService, executeBashMock } = createServiceHarness((workspaceId, script) => {
+      if (script.includes("gh pr view --json")) {
+        return Promise.resolve(
+          bashOk(
+            JSON.stringify({
+              url: `https://github.com/example/repo/pull/${workspaceId === "ws-pr" ? 42 : 43}`,
+              state: "OPEN",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              title: `PR for ${workspaceId}`,
+              isDraft: false,
+              headRefName: workspaceId,
+              baseRefName: "main",
+              statusCheckRollup: [],
+              reviews: [],
+            })
+          )
+        );
+      }
+
+      if (script.includes("gh api graphql")) {
+        return Promise.resolve(
+          bashOk(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    mergeQueueEntry: null,
+                    reviewThreads: { nodes: [] },
+                  },
+                },
+              },
+            })
+          )
+        );
+      }
+
+      throw new Error(`Unexpected executeBash script: ${script}`);
+    });
+
+    const config = (
+      workspaceService as unknown as { config: Pick<Config, "getAllWorkspaceMetadata"> }
+    ).config;
+    const getAllWorkspaceMetadataMock = config.getAllWorkspaceMetadata as ReturnType<typeof mock>;
+
+    const result = await workspaceService.getPullRequestFeedBatch(["ws-pr", "ws-invalid-url"]);
+
+    expect(Object.keys(result)).toEqual(["ws-pr", "ws-invalid-url"]);
+    expect(result["ws-pr"]?.success).toBe(true);
+    expect(result["ws-invalid-url"]?.success).toBe(true);
+    expect(getAllWorkspaceMetadataMock.mock.calls.length).toBe(1);
+    expect(executeBashMock).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("WorkspaceService post-compaction metadata refresh", () => {

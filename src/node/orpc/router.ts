@@ -3373,6 +3373,12 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: result.data };
         }),
+      getPullRequestFeedBatch: t
+        .input(schemas.workspace.getPullRequestFeedBatch.input)
+        .output(schemas.workspace.getPullRequestFeedBatch.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getPullRequestFeedBatch(input.workspaceIds);
+        }),
       archiveMergedInProject: t
         .input(schemas.workspace.archiveMergedInProject.input)
         .output(schemas.workspace.archiveMergedInProject.output)

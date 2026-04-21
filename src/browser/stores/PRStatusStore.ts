@@ -305,50 +305,67 @@ export class PRStatusStore {
   /**
    * Detect PR for workspace's current branch using the typed workspace PR feed endpoint.
    */
-  private async detectWorkspacePR(workspaceId: string): Promise<void> {
+  async detectWorkspacePR(workspaceId: string): Promise<void> {
+    await this.detectWorkspacePRBatch([workspaceId]);
+  }
+
+  private async detectWorkspacePRBatch(workspaceIds: string[]): Promise<void> {
     if (!this.client || !this.isActive) return;
+    if (workspaceIds.length === 0) return;
 
-    const existing = this.workspacePRCache.get(workspaceId);
-    this.workspacePRCache.set(workspaceId, {
-      prLink: existing?.prLink ?? null,
-      status: existing?.status,
-      feed: existing?.feed,
-      loading: true,
-      fetchedAt: Date.now(),
-    });
-    this.workspacePRSubscriptions.bump(workspaceId);
-
-    try {
-      const result = await this.client.workspace.getPullRequestFeed({ workspaceId });
-      if (!this.isActive) return;
-
-      if (!result.success) {
-        this.workspacePRCache.set(workspaceId, {
-          prLink: existing?.prLink ?? null,
-          status: existing?.status,
-          feed: existing?.feed,
-          error: result.error,
-          loading: false,
-          fetchedAt: Date.now(),
-        });
-        this.workspacePRSubscriptions.bump(workspaceId);
-        return;
-      }
-
-      this.applyFeedToCache(workspaceId, result.data);
-      this.workspacePRSubscriptions.bump(workspaceId);
-    } catch (err) {
-      if (!this.isActive) return;
-
+    const existingEntries = new Map<string, WorkspacePRCacheEntry | undefined>();
+    const markWorkspaceError = (workspaceId: string, error: string) => {
+      const existing = existingEntries.get(workspaceId);
       this.workspacePRCache.set(workspaceId, {
         prLink: existing?.prLink ?? null,
         status: existing?.status,
         feed: existing?.feed,
-        error: err instanceof Error ? err.message : "Unknown error",
+        error,
         loading: false,
         fetchedAt: Date.now(),
       });
       this.workspacePRSubscriptions.bump(workspaceId);
+    };
+
+    for (const workspaceId of workspaceIds) {
+      const existing = this.workspacePRCache.get(workspaceId);
+      existingEntries.set(workspaceId, existing);
+      this.workspacePRCache.set(workspaceId, {
+        prLink: existing?.prLink ?? null,
+        status: existing?.status,
+        feed: existing?.feed,
+        loading: true,
+        fetchedAt: Date.now(),
+      });
+      this.workspacePRSubscriptions.bump(workspaceId);
+    }
+
+    try {
+      const results = await this.client.workspace.getPullRequestFeedBatch({ workspaceIds });
+      if (!this.isActive) return;
+
+      for (const workspaceId of workspaceIds) {
+        const result = results[workspaceId];
+        if (!result) {
+          markWorkspaceError(workspaceId, "Batch PR feed omitted a subscribed workspace");
+          continue;
+        }
+
+        if (!result.success) {
+          markWorkspaceError(workspaceId, result.error);
+          continue;
+        }
+
+        this.applyFeedToCache(workspaceId, result.data);
+        this.workspacePRSubscriptions.bump(workspaceId);
+      }
+    } catch (err) {
+      if (!this.isActive) return;
+
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      for (const workspaceId of workspaceIds) {
+        markWorkspaceError(workspaceId, errorMessage);
+      }
     }
   }
 
@@ -412,7 +429,7 @@ export class PRStatusStore {
     }
 
     const now = Date.now();
-    const refreshes: Array<Promise<void>> = [];
+    const workspaceIdsToRefresh: string[] = [];
 
     for (const workspaceId of workspaceIds) {
       const cached = this.workspacePRCache.get(workspaceId);
@@ -450,11 +467,11 @@ export class PRStatusStore {
           continue;
         }
 
-        refreshes.push(this.detectWorkspacePR(workspaceId));
+        workspaceIdsToRefresh.push(workspaceId);
       }
     }
 
-    await Promise.all(refreshes);
+    await this.detectWorkspacePRBatch(workspaceIdsToRefresh);
   }
 
   /**
