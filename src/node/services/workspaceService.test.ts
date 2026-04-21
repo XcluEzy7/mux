@@ -2817,7 +2817,7 @@ describe("WorkspaceService getPullRequestFeed", () => {
                                 line: 12,
                                 createdAt: "2026-04-20T00:00:00Z",
                                 replyTo: null,
-                                author: { login: "greptilebot", __typename: "Bot" },
+                                author: { login: "greptile-ai[bot]", __typename: "Bot" },
                               },
                             ],
                           },
@@ -2855,7 +2855,7 @@ describe("WorkspaceService getPullRequestFeed", () => {
     expect(result.data.reviewers).toEqual([
       { login: "alice", isBot: false, category: "human" },
       { login: "coderabbitai", isBot: true, category: "coderabbit" },
-      { login: "greptilebot", isBot: true, category: "greptile" },
+      { login: "greptile-ai[bot]", isBot: true, category: "greptile" },
     ]);
     expect(executeBashMock).toHaveBeenCalledTimes(2);
   });

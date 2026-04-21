@@ -8,14 +8,17 @@ import type {
   PullRequestReviewerIdentity,
 } from "@/common/types/links";
 
-const REVIEWER_CATEGORY_MATCHERS: Array<{
-  category: Exclude<PullRequestReviewerCategory, "human" | "unknown-bot">;
-  matches: RegExp;
-}> = [
-  { category: "codex", matches: /codex/i },
-  { category: "coderabbit", matches: /coderabbit/i },
-  { category: "greptile", matches: /greptile/i },
-];
+const REVIEWER_CATEGORY_BY_BOT_LOGIN: Record<
+  string,
+  Exclude<PullRequestReviewerCategory, "human" | "unknown-bot">
+> = {
+  "openai-codex-reviewer[bot]": "codex",
+  "codex[bot]": "codex",
+  "coderabbitai[bot]": "coderabbit",
+  coderabbitai: "coderabbit",
+  "greptile[bot]": "greptile",
+  "greptile-ai[bot]": "greptile",
+};
 
 export const GH_PR_VIEW_JSON_FIELDS = [
   "number",
@@ -123,14 +126,13 @@ export function parseMergeQueueEntry(raw: unknown): MergeQueueEntry | null {
 }
 
 export function categorizeReviewer(login: string, isBot: boolean): PullRequestReviewerCategory {
-  for (const matcher of REVIEWER_CATEGORY_MATCHERS) {
-    if (matcher.matches.test(login)) {
-      return matcher.category;
-    }
-  }
-
   if (!isBot) {
     return "human";
+  }
+
+  const category = REVIEWER_CATEGORY_BY_BOT_LOGIN[login.toLowerCase()];
+  if (category) {
+    return category;
   }
 
   return "unknown-bot";
