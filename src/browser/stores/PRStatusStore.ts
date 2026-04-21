@@ -79,6 +79,9 @@ export class PRStatusStore {
   // Workspace-based PR detection (keyed by workspaceId)
   private workspacePRSubscriptions = new MapStore<string, WorkspacePRCacheEntry>();
   private workspacePRCache = new Map<string, WorkspacePRCacheEntry>();
+  // Keep hook snapshots instance-scoped so removed workspaces and disposed stores
+  // can reclaim entries instead of leaking via module-level state.
+  private workspacePRHookCache = new Map<string, GitHubPRLinkWithStatus | null>();
   private runtimeRetryUnsubscribers = new Map<string, () => void>();
 
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
@@ -133,6 +136,14 @@ export class PRStatusStore {
     }
 
     this.workspaceMetadata = metadata;
+
+    for (const id of this.workspacePRCache.keys()) {
+      if (!metadata.has(id)) {
+        this.workspacePRCache.delete(id);
+        this.workspacePRHookCache.delete(id);
+      }
+    }
+
     for (const [id, unsubscribe] of this.runtimeRetryUnsubscribers) {
       if (!metadata.has(id)) {
         unsubscribe();
@@ -180,6 +191,7 @@ export class PRStatusStore {
         this.workspaceSubscriptionCounts.delete(workspaceId);
         this.runtimeRetryUnsubscribers.get(workspaceId)?.();
         this.runtimeRetryUnsubscribers.delete(workspaceId);
+        this.workspacePRHookCache.delete(workspaceId);
       } else {
         this.workspaceSubscriptionCounts.set(workspaceId, next);
       }
@@ -211,6 +223,40 @@ export class PRStatusStore {
     }
 
     return undefined;
+  }
+
+  /**
+   * Build a stable hook snapshot for useWorkspacePR.
+   */
+  getWorkspacePRHookSnapshot(workspaceId: string): GitHubPRLinkWithStatus | null {
+    const cached = this.getWorkspacePR(workspaceId);
+    const existing = this.workspacePRHookCache.get(workspaceId);
+
+    if (!cached?.prLink) {
+      if (existing === null) {
+        return existing;
+      }
+      this.workspacePRHookCache.set(workspaceId, null);
+      return null;
+    }
+
+    if (
+      existing?.url === cached.prLink.url &&
+      existing?.status === cached.status &&
+      existing?.loading === cached.loading &&
+      existing?.error === cached.error
+    ) {
+      return existing;
+    }
+
+    const nextSnapshot: GitHubPRLinkWithStatus = {
+      ...cached.prLink,
+      status: cached.status,
+      loading: cached.loading,
+      error: cached.error,
+    };
+    this.workspacePRHookCache.set(workspaceId, nextSnapshot);
+    return nextSnapshot;
   }
 
   /**
@@ -376,6 +422,8 @@ export class PRStatusStore {
       unsubscribe();
     }
     this.runtimeRetryUnsubscribers.clear();
+    this.workspacePRCache.clear();
+    this.workspacePRHookCache.clear();
     this.refreshController.dispose();
   }
 }
@@ -391,9 +439,6 @@ export function getPRStatusStoreInstance(): PRStatusStore {
 // ─────────────────────────────────────────────────────────────────────────────
 // React hooks
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Cache for useWorkspacePR hook to return stable references
-const workspacePRHookCache = new Map<string, GitHubPRLinkWithStatus | null>();
 
 /**
  * Hook to get the full typed PR watcher feed for a workspace.
@@ -417,43 +462,6 @@ export function useWorkspacePR(workspaceId: string): GitHubPRLinkWithStatus | nu
 
   return useSyncExternalStore(
     (listener) => store.subscribeWorkspace(workspaceId, listener),
-    () => {
-      const cached = store.getWorkspacePR(workspaceId);
-      const existing = workspacePRHookCache.get(workspaceId);
-
-      // No data yet
-      if (!cached) {
-        if (existing === null) return existing;
-        workspacePRHookCache.set(workspaceId, null);
-        return null;
-      }
-
-      // No PR for this branch
-      if (!cached.prLink) {
-        if (existing === null) return existing;
-        workspacePRHookCache.set(workspaceId, null);
-        return null;
-      }
-
-      // Return same reference if nothing meaningful changed
-      if (
-        existing?.url === cached.prLink.url &&
-        existing.status === cached.status &&
-        existing.loading === cached.loading &&
-        existing.error === cached.error
-      ) {
-        return existing;
-      }
-
-      // Build new object and cache it
-      const newResult: GitHubPRLinkWithStatus = {
-        ...cached.prLink,
-        status: cached.status,
-        loading: cached.loading,
-        error: cached.error,
-      };
-      workspacePRHookCache.set(workspaceId, newResult);
-      return newResult;
-    }
+    () => store.getWorkspacePRHookSnapshot(workspaceId)
   );
 }
