@@ -93,3 +93,15 @@ export interface ReviewStats {
   /** Number of unread hunks */
   unread: number;
 }
+
+/**
+ * Parameters for a workspace action badge that shows a change-count indicator.
+ * Allows different actions (e.g. Code Review, custom diffs) to use different
+ * git diff semantics while sharing the same underlying hook logic.
+ */
+export interface ReviewActionBadgeParams {
+  /** Base reference to diff against (e.g. "main", "HEAD", "--staged"). Defaults to "main". */
+  diffBase?: string;
+  /** Whether to include uncommitted working-directory changes. Defaults to true. */
+  includeUncommitted?: boolean;
+}
