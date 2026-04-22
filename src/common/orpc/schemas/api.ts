@@ -1088,6 +1088,13 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(WorkspacePullRequestStatusSchema.nullable(), z.string()),
   },
+  getPullRequestStatuses: {
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: z.record(
+      z.string(),
+      ResultSchema(WorkspacePullRequestStatusSchema.nullable(), z.string())
+    ),
+  },
   getPullRequestFeed: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(WorkspacePullRequestFeedSchema, z.string()),

@@ -596,4 +596,118 @@ describe("PR feed caching", () => {
       store.dispose();
     }
   });
+
+  it("uses batch endpoint over individual calls when available", async () => {
+    const workspaceA = "ws-batch-a";
+    const workspaceB = "ws-batch-b";
+    const getPullRequestStatus = mock((input: { workspaceId: string }) =>
+      Promise.resolve({
+        success: true as const,
+        data: makeFeed(input.workspaceId).pr,
+      })
+    );
+    const getPullRequestStatuses = mock((input: { workspaceIds: string[] }) => {
+      const results: Record<string, { success: true; data: ReturnType<typeof makeFeed>["pr"] }> = {};
+      for (const id of input.workspaceIds) {
+        results[id] = { success: true, data: makeFeed(id).pr };
+      }
+      return Promise.resolve(results);
+    });
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestStatus,
+          getPullRequestStatuses,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([
+          [workspaceA, createWorkspaceMetadata(workspaceA, DEFAULT_RUNTIME_CONFIG)],
+          [workspaceB, createWorkspaceMetadata(workspaceB, DEFAULT_RUNTIME_CONFIG)],
+        ])
+      );
+      await sleep(0);
+      store.subscribeWorkspace(workspaceA, () => undefined);
+      store.subscribeWorkspace(workspaceB, () => undefined);
+
+      await waitUntil(
+        () =>
+          Boolean(store.getWorkspacePR(workspaceA)?.prLink) &&
+          Boolean(store.getWorkspacePR(workspaceB)?.prLink)
+      );
+
+      // Batch endpoint should be called once, not individual endpoints twice
+      expect(getPullRequestStatuses.mock.calls.length).toBe(1);
+      expect(getPullRequestStatus.mock.calls.length).toBe(0);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("preserves freshest feed in batch status update after concurrent feed refresh", async () => {
+    const workspaceId = "ws-batch-race";
+    const feed = makeFeed(workspaceId);
+    feed.pr!.status!.title = "Updated Title from Feed";
+    feed.fetchedAt = Date.now() + 1000; // Newer timestamp
+
+    let resolveFeedRequest: ((value: { success: true; data: typeof feed }) => void) | null = null;
+    const getPullRequestFeed = mock(
+      () =>
+        new Promise<{ success: true; data: typeof feed }>((resolve) => {
+          resolveFeedRequest = resolve;
+        })
+    );
+    const getPullRequestStatuses = mock(() => {
+      // Return stale status that predates the feed
+      const results: Record<string, { success: true; data: typeof feed.pr }> = {};
+      results[workspaceId] = {
+        success: true,
+        data: {
+          ...feed.pr!,
+          status: { ...feed.pr!.status!, title: "Old Title from Status", fetchedAt: Date.now() },
+        },
+      };
+      return Promise.resolve(results);
+    });
+    const store = new PRStatusStore({
+      getStatus: () => "running",
+    });
+
+    try {
+      store.setClient({
+        workspace: {
+          getPullRequestFeed,
+          getPullRequestStatuses,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEFAULT_RUNTIME_CONFIG)]])
+      );
+      await sleep(0);
+      store.subscribeWorkspace(workspaceId, () => undefined);
+      store.subscribeWorkspaceFeed(workspaceId, () => undefined);
+
+      // Start feed refresh (will block)
+      const refreshFeed = (
+        store as unknown as { detectWorkspaceFeed: (id: string) => Promise<void> }
+      ).detectWorkspaceFeed.bind(store);
+
+      const feedRefresh = refreshFeed(workspaceId);
+
+      // Feed completes first
+      resolveFeedRequest?.({ success: true, data: feed });
+      await feedRefresh;
+
+      expect(store.getWorkspacePRFeed(workspaceId)).toEqual(feed);
+      expect(store.getWorkspacePR(workspaceId)?.status?.title).toBe("Updated Title from Feed");
+    } finally {
+      store.dispose();
+    }
+  });
 });

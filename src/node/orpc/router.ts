@@ -75,6 +75,7 @@ import {
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
+import { resolveAgentSelectableFromUi } from "@/node/services/agentDefinitions/resolveAgentVisibility";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
@@ -1463,13 +1464,9 @@ export const router = (authToken?: string) => {
                   return null;
                 }
 
-                // NOTE: hidden is opt-out. selectable is legacy opt-in.
-                const uiSelectableBase =
-                  typeof resolvedFrontmatter.ui?.hidden === "boolean"
-                    ? !resolvedFrontmatter.ui.hidden
-                    : typeof resolvedFrontmatter.ui?.selectable === "boolean"
-                      ? resolvedFrontmatter.ui.selectable
-                      : true;
+                const uiSelectableBase = resolveAgentSelectableFromUi(
+                  resolvedFrontmatter.ui
+                );
 
                 return {
                   kind: "resolved" as const,
@@ -3372,6 +3369,12 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
           return { success: true, data: result.data };
+        }),
+      getPullRequestStatuses: t
+        .input(schemas.workspace.getPullRequestStatuses.input)
+        .output(schemas.workspace.getPullRequestStatuses.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getPullRequestStatuses(input.workspaceIds);
         }),
       getPullRequestFeed: t
         .input(schemas.workspace.getPullRequestFeed.input)

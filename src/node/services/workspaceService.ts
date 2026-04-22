@@ -4838,6 +4838,69 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Batch fetch PR status for multiple workspaces in a single pass.
+   *
+   * This avoids O(n) RPC calls from the frontend sidebar by gathering all
+   * visible workspace PR statuses in one batch. Each workspace is processed
+   * independently (no head-of-line blocking from slow gh calls).
+   */
+  async getPullRequestStatuses(
+    workspaceIds: string[]
+  ): Promise<Record<string, Result<GitHubPRLinkWithStatus | null>>> {
+    const results: Record<string, Result<GitHubPRLinkWithStatus | null>> = {};
+    const fetchedAt = Date.now();
+
+    // Initialize all results to avoid missing entries for invalid IDs
+    for (const workspaceId of workspaceIds) {
+      results[workspaceId.trim()] = Err("Workspace not found");
+    }
+
+    if (workspaceIds.length === 0) {
+      return results;
+    }
+
+    // Process each workspace independently without head-of-line blocking.
+    // Use bounded concurrency to avoid overwhelming the gh CLI.
+    const GH_CONCURRENCY_LIMIT = 4;
+
+    await forEachWithConcurrencyLimit(
+      workspaceIds.map((id) => id.trim()).filter(Boolean),
+      GH_CONCURRENCY_LIMIT,
+      async (workspaceId) => {
+        try {
+          const persistedWorkspace = this.config.findWorkspace(workspaceId);
+          if (!persistedWorkspace) {
+            results[workspaceId] = Err(`Workspace not found: ${workspaceId}`);
+            return;
+          }
+
+          const repoRootProjectPath =
+            persistedWorkspace.attributionProjectPath ?? persistedWorkspace.projectPath;
+          const viewRecordResult = await this.getPullRequestViewRecord(
+            workspaceId,
+            repoRootProjectPath
+          );
+
+          if (!viewRecordResult.success) {
+            results[workspaceId] = Err(viewRecordResult.error);
+            return;
+          }
+
+          const statusResult = this.buildPullRequestStatusFromViewRecord(
+            viewRecordResult.data,
+            fetchedAt
+          );
+          results[workspaceId] = statusResult;
+        } catch (error) {
+          results[workspaceId] = Err(getErrorMessage(error));
+        }
+      }
+    );
+
+    return results;
+  }
+
+  /**
    * Archive all non-archived workspaces within a project whose GitHub PR is merged.
    *
    * This is intended for a single command-palette action (one backend call), to avoid
