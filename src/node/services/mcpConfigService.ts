@@ -13,7 +13,17 @@ import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
+import { shellQuote } from "@/common/utils/shell";
 import { getErrorMessage } from "@/common/utils/errors";
+import { CUSTOM_TOOL_MCP_SERVER_PREFIX } from "@/common/constants/mcp";
+
+export function getCustomToolMcpServerName(customToolId: string): string {
+  return `${CUSTOM_TOOL_MCP_SERVER_PREFIX}${customToolId}`;
+}
+
+function buildQuotedCommand(command: string, args?: string[]): string {
+  return [command, ...(args ?? [])].map((arg) => shellQuote(arg)).join(" ");
+}
 
 export class MCPConfigService {
   private readonly config: Config;
@@ -163,6 +173,52 @@ export class MCPConfigService {
     return this.readConfigFile(this.getRepoOverridePath(projectPath));
   }
 
+  private getCustomToolServers(): Record<string, MCPServerInfo> {
+    const tools = this.config.loadConfigOrDefault().tools;
+    if (!tools?.custom?.length) {
+      return {};
+    }
+
+    const customServers: Record<string, MCPServerInfo> = {};
+    for (const customTool of tools.custom) {
+      if (!customTool.enabled) {
+        continue;
+      }
+
+      const trimmedCommand = customTool.command.trim();
+      if (trimmedCommand.length === 0) {
+        log.warn("Skipping synthetic custom tool MCP server with blank command", {
+          customToolId: customTool.id,
+        });
+        continue;
+      }
+
+      customServers[getCustomToolMcpServerName(customTool.id)] = {
+        transport: "stdio",
+        command: buildQuotedCommand(trimmedCommand, customTool.args),
+        disabled: false,
+      };
+    }
+
+    return customServers;
+  }
+
+  private mergeCustomToolServers(
+    baseServers: Record<string, MCPServerInfo>
+  ): Record<string, MCPServerInfo> {
+    const merged = { ...baseServers };
+    for (const [name, serverInfo] of Object.entries(this.getCustomToolServers())) {
+      if (merged[name] !== undefined) {
+        log.warn("Skipping synthetic custom tool MCP server due to name collision", { name });
+        continue;
+      }
+
+      merged[name] = serverInfo;
+    }
+
+    return merged;
+  }
+
   private async saveGlobalConfig(config: MCPConfig): Promise<void> {
     await this.ensureMuxRootDir();
 
@@ -220,25 +276,36 @@ export class MCPConfigService {
    * - When projectPath is provided and trusted=false: returns only global servers
    * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
    */
-  async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
+  async listServers(
+    projectPath?: string,
+    trusted = false,
+    includeSyntheticCustomToolServers = true
+  ): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
 
     if (!projectPath) {
-      return globalCfg.servers;
+      return includeSyntheticCustomToolServers
+        ? this.mergeCustomToolServers(globalCfg.servers)
+        : globalCfg.servers;
     }
 
     if (!trusted) {
       log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return globalCfg.servers;
+      return includeSyntheticCustomToolServers
+        ? this.mergeCustomToolServers(globalCfg.servers)
+        : globalCfg.servers;
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
 
-    // Repo overrides win by server name.
-    return {
+    // Repo overrides win by server name. Synthetic custom-tool servers should never
+    // overwrite explicit user/server entries with the same name.
+    const merged = {
       ...globalCfg.servers,
       ...repoCfg.servers,
     };
+
+    return includeSyntheticCustomToolServers ? this.mergeCustomToolServers(merged) : merged;
   }
 
   async addServer(

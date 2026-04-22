@@ -26,6 +26,11 @@ export interface ResolveToolPolicyOptions {
   advisorEnabled?: boolean;
 }
 
+export interface ResolvedToolPolicyLayers {
+  agentPolicy: ToolPolicy;
+  runtimePolicy: ToolPolicy;
+}
+
 // Tools that are never allowed in autonomous sub-agent flows.
 // Single source of truth: SUBAGENT_HARD_DENY is derived from this list.
 const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
@@ -92,7 +97,9 @@ function matchesSubagentHardDeniedTool(pattern: string): boolean {
  * - plan-like subagents: enable `propose_plan`, disable `agent_report`
  * - non-plan subagents: disable `propose_plan`, enable `agent_report`
  */
-export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
+export function resolveToolPolicyLayersForAgent(
+  options: ResolveToolPolicyOptions
+): ResolvedToolPolicyLayers {
   const { agents, isSubagent, disableTaskToolsForDepth } = options;
 
   // Start with deny-all baseline
@@ -188,5 +195,10 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     runtimePolicy.push({ regex_match: "advisor", action: "disable" });
   }
 
+  return { agentPolicy, runtimePolicy };
+}
+
+export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
+  const { agentPolicy, runtimePolicy } = resolveToolPolicyLayersForAgent(options);
   return [...agentPolicy, ...runtimePolicy];
 }
