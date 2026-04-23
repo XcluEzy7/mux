@@ -23,8 +23,6 @@ import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs/promises";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import type { TestEnvironment } from "./setup";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
@@ -35,8 +33,7 @@ import type { WorkspaceSendMessageOutput } from "@/common/orpc/schemas";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
-
-const execAsync = promisify(exec);
+import { execFileAsync } from "../../src/node/utils/disposableExec";
 import { ORPCError } from "@orpc/client";
 import { ValidationError } from "@orpc/server";
 
@@ -577,27 +574,28 @@ export async function waitForFileNotExists(filePath: string, timeoutMs = 5000): 
   }, timeoutMs);
 }
 
+async function runGit(args: string[], repoPath?: string): Promise<{ stdout: string; stderr: string }> {
+  // Keep test git setup off the shell path so short-lived git reads stay deterministic in CI.
+  const gitArgs = repoPath ? ["-C", repoPath, ...args] : args;
+  using proc = execFileAsync("git", gitArgs);
+  return await proc.result;
+}
+
 /**
  * Create a temporary git repository for testing
  */
 export async function createTempGitRepo(): Promise<string> {
-  // eslint-disable-next-line local/no-unsafe-child-process
-
   // Use mkdtemp to avoid race conditions and ensure unique directory
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-repo-"));
-
-  // Use promisify(exec) for test setup - DisposableExec has issues in CI
-  // TODO: Investigate why DisposableExec causes empty git output in CI
-  await execAsync(`git init`, { cwd: tempDir });
-  // Disable GPG signing for test commits - avoids issues with 1Password SSH agent
-  await execAsync(
-    `git config user.email "test@example.com" && git config user.name "Test User" && git config commit.gpgsign false`,
-    { cwd: tempDir }
-  );
-  await execAsync(
-    `echo "test" > README.md && git add . && git commit -m "Initial commit" && git branch test-branch`,
-    { cwd: tempDir }
-  );
+  await runGit(["init"], tempDir);
+  // Disable GPG signing for test commits to avoid external signing agents in local environments.
+  await runGit(["config", "user.email", "test@example.com"], tempDir);
+  await runGit(["config", "user.name", "Test User"], tempDir);
+  await runGit(["config", "commit.gpgsign", "false"], tempDir);
+  await fs.writeFile(path.join(tempDir, "README.md"), "test\n");
+  await runGit(["add", "README.md"], tempDir);
+  await runGit(["commit", "-m", "Initial commit"], tempDir);
+  await runGit(["branch", "test-branch"], tempDir);
 
   return tempDir;
 }
@@ -608,15 +606,13 @@ export async function createTempGitRepo(): Promise<string> {
  */
 export async function addFakeOrigin(repoPath: string): Promise<void> {
   const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-bare-"));
-  await execAsync(`git clone --bare "${repoPath}" "${bareDir}"`);
-  await execAsync(`git remote add origin "${bareDir}"`, { cwd: repoPath });
+  await runGit(["clone", "--bare", repoPath, bareDir]);
+  await runGit(["remote", "add", "origin", bareDir], repoPath);
   // Set up tracking for main/master branch
-  const { stdout: branch } = await execAsync(`git branch --show-current`, { cwd: repoPath });
+  const { stdout: branch } = await runGit(["branch", "--show-current"], repoPath);
   const branchName = branch.trim();
-  await execAsync(`git fetch origin`, { cwd: repoPath });
-  await execAsync(`git branch --set-upstream-to=origin/${branchName} ${branchName}`, {
-    cwd: repoPath,
-  });
+  await runGit(["fetch", "origin"], repoPath);
+  await runGit(["branch", "--set-upstream-to=origin/" + branchName, branchName], repoPath);
 }
 
 /**
@@ -630,11 +626,9 @@ export async function addSubmodule(
   submoduleUrl: string = "https://github.com/left-pad/left-pad.git",
   submoduleName: string = "vendor/left-pad"
 ): Promise<void> {
-  await execAsync(`git submodule add "${submoduleUrl}" "${submoduleName}"`, { cwd: repoPath });
+  await runGit(["submodule", "add", submoduleUrl, submoduleName], repoPath);
   // Use -c to ensure no GPG signing in case repo config doesn't have it set
-  await execAsync(`git -c commit.gpgsign=false commit -m "Add submodule ${submoduleName}"`, {
-    cwd: repoPath,
-  });
+  await runGit(["-c", "commit.gpgsign=false", "commit", "-m", `Add submodule ${submoduleName}`], repoPath);
 }
 
 /**
