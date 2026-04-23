@@ -21,9 +21,25 @@ describe("AskUserQuestionManager", () => {
     const promise = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
     manager.answer("ws", "tool-1", { "What should we do?": "A" });
 
-    const answers = await promise;
-    expect(answers).toEqual({ "What should we do?": "A" });
+    const response = await promise;
+    expect(response).toEqual({
+      answers: { "What should we do?": "A" },
+      answerSelections: undefined,
+    });
     expect(manager.getLatestPending("ws")).toBeNull();
+  });
+
+  it("preserves answerSelections when answered", async () => {
+    const manager = new AskUserQuestionManager();
+
+    const promise = manager.registerPending("ws", "tool-1", [...QUESTIONS]);
+    manager.answer("ws", "tool-1", { "What should we do?": "A" }, { "What should we do?": ["A"] });
+
+    const response = await promise;
+    expect(response).toEqual({
+      answers: { "What should we do?": "A" },
+      answerSelections: { "What should we do?": ["A"] },
+    });
   });
 
   it("rejects when canceled", async () => {

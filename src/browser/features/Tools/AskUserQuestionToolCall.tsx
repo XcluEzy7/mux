@@ -74,7 +74,7 @@ function isAskUserQuestionPayload(val: unknown): val is AskUserQuestionUiOnlyPay
     return false;
   }
 
-  if (!record.answers || typeof record.answers !== "object") {
+  if (!record.answers || typeof record.answers !== "object" || Array.isArray(record.answers)) {
     return false;
   }
 
@@ -85,7 +85,7 @@ function isAskUserQuestionPayload(val: unknown): val is AskUserQuestionUiOnlyPay
   }
 
   if (record.answerSelections != null) {
-    if (typeof record.answerSelections !== "object") {
+    if (typeof record.answerSelections !== "object" || Array.isArray(record.answerSelections)) {
       return false;
     }
 

@@ -7611,6 +7611,29 @@ describe("TaskService", () => {
     expect(intent).toBe("orchestrator");
   });
 
+  test("resolveAskUserQuestionApprovalIntent rejects negated approvals", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "not approved yet",
+      },
+    });
+
+    expect(intent).toBeNull();
+  });
+
+  test("resolveAskUserQuestionApprovalIntent rejects negated destination intents", () => {
+    const intent = resolveAskUserQuestionApprovalIntent({
+      answers: {
+        decision: "approved, but don't execute yet",
+      },
+      answerSelections: {
+        decision: ["Implementation"],
+      },
+    });
+
+    expect(intent).toBeNull();
+  });
+
   test("resolveAskUserQuestionApprovalIntent ignores unrelated answers", () => {
     const intent = resolveAskUserQuestionApprovalIntent({
       answers: {
@@ -8328,6 +8351,36 @@ describe("TaskService", () => {
       workspaceId: childId,
       answers: {
         decision: "Don't execute yet, I need implementation details first",
+      },
+    });
+
+    expect(targetAgentId).toBeNull();
+  });
+
+  test("ask_user_question negated approval does not trigger handoff", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "I don't approve this yet",
+      },
+    });
+
+    expect(targetAgentId).toBeNull();
+  });
+
+  test("ask_user_question negated orchestrator intent does not trigger handoff", async () => {
+    const { internal, childId } = await setupPlanModeStreamEndHarness({
+      planSubagentExecutorRouting: "orchestrator",
+    });
+
+    const targetAgentId = await internal.resolveAskUserQuestionHandoffTarget({
+      workspaceId: childId,
+      answers: {
+        decision: "approved, but do not orchestrate this",
       },
     });
 

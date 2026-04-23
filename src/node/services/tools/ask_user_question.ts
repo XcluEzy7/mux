@@ -37,13 +37,14 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
       );
 
       if (!abortSignal) {
-        const answers = await pendingPromise;
+        const response = await pendingPromise;
         return {
-          summary: buildAskUserQuestionSummary(answers),
+          summary: buildAskUserQuestionSummary(response.answers),
           ui_only: {
             ask_user_question: {
               questions: args.questions,
-              answers,
+              answers: response.answers,
+              answerSelections: response.answerSelections,
             },
           },
         };
@@ -59,7 +60,7 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
         throw new Error("Interrupted");
       }
 
-      const abortPromise = new Promise<Record<string, string>>((_, reject) => {
+      const abortPromise = new Promise<never>((_, reject) => {
         abortSignal.addEventListener(
           "abort",
           () => {
@@ -74,15 +75,16 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
         );
       });
 
-      const answers = await Promise.race([pendingPromise, abortPromise]);
-      assert(answers && typeof answers === "object", "Expected answers to be an object");
+      const response = await Promise.race([pendingPromise, abortPromise]);
+      assert(response && typeof response === "object", "Expected ask_user_question response");
 
       return {
-        summary: buildAskUserQuestionSummary(answers),
+        summary: buildAskUserQuestionSummary(response.answers),
         ui_only: {
           ask_user_question: {
             questions: args.questions,
-            answers,
+            answers: response.answers,
+            answerSelections: response.answerSelections,
           },
         },
       };

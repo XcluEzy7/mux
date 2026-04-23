@@ -68,6 +68,16 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((entry) => typeof entry === "string");
 }
 
+function isAnswerSelectionRecord(value: unknown): value is Record<string, string[]> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).every(
+    (entry) => Array.isArray(entry) && entry.every((label) => typeof label === "string")
+  );
+}
+
 function isAskUserQuestionUiOnly(value: unknown): value is AskUserQuestionUiOnlyPayload {
   if (!isRecord(value)) {
     return false;
@@ -77,7 +87,19 @@ function isAskUserQuestionUiOnly(value: unknown): value is AskUserQuestionUiOnly
     return false;
   }
 
-  return isStringRecord(value.answers);
+  if (!isStringRecord(value.answers)) {
+    return false;
+  }
+
+  if (
+    value.answerSelections !== undefined &&
+    value.answerSelections !== null &&
+    !isAnswerSelectionRecord(value.answerSelections)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function isFileEditUiOnly(value: unknown): value is FileEditUiOnlyPayload {
