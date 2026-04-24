@@ -207,9 +207,10 @@ export default defineConfig(({ mode }) => {
         // Ignore node_modules to drastically reduce file handle usage
         ignored: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
 
-        // Use polling on Windows to avoid file handle exhaustion
-        // This is slightly less efficient but much more stable
-        usePolling: process.platform === "win32",
+        // Use polling on Windows and in low-inotify Linux environments.
+        // This is slightly less efficient but much more stable.
+        usePolling:
+          process.platform === "win32" || process.env.MUX_VITE_USE_POLLING === "1",
 
         // If using polling, set a reasonable interval (in milliseconds)
         interval: 1000,

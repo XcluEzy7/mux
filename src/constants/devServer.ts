@@ -14,7 +14,7 @@ function formatHostForUrl(host: string): string {
  * and sandboxed Electron sessions always load the same renderer origin.
  */
 export function getDesktopDevServerOrigin(env: NodeJS.ProcessEnv = process.env): string {
-  const host = env.MUX_DEVSERVER_HOST ?? DEFAULT_DESKTOP_DEV_SERVER_HOST;
-  const port = env.MUX_DEVSERVER_PORT ?? env.MUX_VITE_PORT ?? String(DEFAULT_DEV_UI_PORT);
+  const host = env.MUX_DEVSERVER_HOST?.trim() || DEFAULT_DESKTOP_DEV_SERVER_HOST;
+  const port = env.MUX_DEVSERVER_PORT?.trim() || env.MUX_VITE_PORT?.trim() || String(DEFAULT_DEV_UI_PORT);
   return `http://${formatHostForUrl(host)}:${port}`;
 }

@@ -27,6 +27,16 @@ describe("getDesktopDevServerOrigin", () => {
     ).toBe("http://127.0.0.1:4222");
   });
 
+  test("treats empty env overrides as unset", () => {
+    expect(
+      getDesktopDevServerOrigin({
+        MUX_DEVSERVER_HOST: "   ",
+        MUX_DEVSERVER_PORT: "",
+        MUX_VITE_PORT: "",
+      } as NodeJS.ProcessEnv)
+    ).toBe(`http://127.0.0.1:${DEFAULT_DEV_UI_PORT}`);
+  });
+
   test("formats IPv6 hosts correctly", () => {
     expect(
       getDesktopDevServerOrigin({
