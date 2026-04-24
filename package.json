@@ -18,6 +18,7 @@
   "packageManager": "bun@1.3.5",
   "scripts": {
     "dev": "make dev",
+    "dev:desktop": "make dev-desktop",
     "prebuild:main": "./scripts/generate-version.sh",
     "build": "make build",
     "start": "make start",

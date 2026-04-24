@@ -4,7 +4,8 @@
 #
 # Quick Start:
 #   make help          - Show all available targets
-#   make dev           - Start development server with hot reload
+#   make dev           - Start full browser dev stack
+#   make dev-desktop   - Start Electron-oriented watcher stack
 #   make build         - Build all targets (parallel when possible)
 #   make static-check  - Run fast local static checks (lint + typecheck + fmt-check)
 #   make static-check-full - Run the full CI static check suite
@@ -60,7 +61,7 @@ ESBUILD_TOKENIZER_WORKER_FLAGS := --bundle --platform=node --target=node22 --for
 # Include formatting rules
 include fmt.mk
 
-.PHONY: all build dev start clean help
+.PHONY: all build dev dev-desktop dev-server start clean help
 .PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
 .PHONY: lint lint-fix typecheck typecheck-react-native mobile-web mobile-cors-proxy mobile-sandbox static-check static-check-full
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
@@ -148,31 +149,35 @@ help: ## Show this help message
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 ## Development
+dev: ## Start full browser dev stack (backend :5173 + frontend :3010 with HMR)
+	@$(MAKE) --no-print-directory dev-server
+
 ifeq ($(OS),Windows_NT)
-dev: node_modules/.installed build-main ## Start development server (LAN-visible Vite + nodemon watcher for Windows compatibility)
-	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
-	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
-	# https://github.com/oven-sh/bun/issues/18275
-	@NODE_OPTIONS="--max-old-space-size=4096" \
-		npm x concurrently -k --raw \
+dev-desktop: node_modules/.installed build-main build-preload ## Start Electron-oriented dev stack (Vite + main/preload watchers, no backend)
+	@echo "Starting dev-desktop mode (Vite + main/preload watchers, no backend)..."
+	@node scripts/build-main-watch.js
+	@npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
 else
-dev: node_modules/.installed build-main build-preload ## Start development server (LAN-visible Vite + tsgo watcher for 10x faster type checking)
+dev-desktop: node_modules/.installed build-main build-preload ## Start Electron-oriented dev stack (Vite + main/preload watchers, no backend)
+	@echo "Starting dev-desktop mode (Vite + main/preload watchers, no backend)..."
+	@node scripts/build-main-watch.js
 	@bun x concurrently -k \
-		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
+		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
 endif
 
 ifeq ($(OS),Windows_NT)
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :5173 + frontend :3010). Repo dev defaults to LAN-visible bindings; override VITE_HOST/BACKEND_HOST/VITE_ALLOWED_HOSTS to narrow exposure
+dev-server: node_modules/.installed build-main ## Start full browser dev stack (backend :5173 + frontend :3010 with HMR). Repo dev defaults to LAN-visible bindings; override VITE_HOST/BACKEND_HOST/VITE_ALLOWED_HOSTS to narrow exposure
 	@echo "Starting dev-server..."
 	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),0.0.0.0):$(or $(BACKEND_PORT),5173)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),0.0.0.0):$(or $(VITE_PORT),3010)"
 	@echo ""
 	@echo "Repo dev is LAN-visible by default; set VITE_HOST=127.0.0.1 BACKEND_HOST=127.0.0.1 to keep it local-only."
+	@node scripts/build-main-watch.js
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@npm x concurrently -k \
 		"nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules scripts/build-main-watch.js" \
@@ -180,12 +185,13 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),0.0.0.0) --port $(or $(BACKEND_PORT),5173)" \
 		"set MUX_VITE_HOST=$(or $(VITE_HOST),0.0.0.0)&& set MUX_VITE_PORT=$(or $(VITE_PORT),3010)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),5173)&& vite"
 else
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :5173 + frontend :3010). Repo dev defaults to LAN-visible bindings; override VITE_HOST/BACKEND_HOST/VITE_ALLOWED_HOSTS to narrow exposure
+dev-server: node_modules/.installed build-main ## Start full browser dev stack (backend :5173 + frontend :3010 with HMR). Repo dev defaults to LAN-visible bindings; override VITE_HOST/BACKEND_HOST/VITE_ALLOWED_HOSTS to narrow exposure
 	@echo "Starting dev-server..."
 	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),0.0.0.0):$(or $(BACKEND_PORT),5173)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),0.0.0.0):$(or $(VITE_PORT),3010)"
 	@echo ""
 	@echo "Repo dev is LAN-visible by default; set VITE_HOST=127.0.0.1 BACKEND_HOST=127.0.0.1 to keep it local-only."
+	@node scripts/build-main-watch.js
 	@# Keep tsgo -> tsc-alias sequential to avoid transient unresolved @/ imports in dist during restarts.
 	@bun x concurrently -k \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \

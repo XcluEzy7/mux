@@ -10,7 +10,7 @@
  *
  * This script creates a fresh temporary mux root dir, optionally copies over the
  * user's providers/config, picks free ports, then launches:
- *   - `make dev`   (Vite + watchers)
+ *   - `make dev-desktop` (Vite + Electron watchers)
  *   - `bunx electron ... .` (desktop app)
  *
  * Usage:
@@ -230,7 +230,7 @@ async function main(): Promise<number> {
       console.log("  KEEP_SANDBOX=1 (temp root will not be deleted)");
     }
 
-    devProc = spawn(makeCmd, ["dev"], {
+    devProc = spawn(makeCmd, ["dev-desktop"], {
       stdio: "inherit",
       env: {
         ...process.env,
@@ -241,7 +241,7 @@ async function main(): Promise<number> {
       },
     });
 
-    const devExitPromise = waitForChildExit(devProc, `${makeCmd} dev`);
+    const devExitPromise = waitForChildExit(devProc, `${makeCmd} dev-desktop`);
 
     // Forward signals so Ctrl+C stops all subprocesses.
     forwardSignalsToChildProcesses(() => [devProc, electronProc]);
