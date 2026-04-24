@@ -37,6 +37,24 @@ describe("getDesktopDevServerOrigin", () => {
     ).toBe(`http://127.0.0.1:${DEFAULT_DEV_UI_PORT}`);
   });
 
+  test("falls back to the Vite port when the desktop override is not numeric", () => {
+    expect(
+      getDesktopDevServerOrigin({
+        MUX_DEVSERVER_PORT: "abc",
+        MUX_VITE_PORT: "4222",
+      } as NodeJS.ProcessEnv)
+    ).toBe("http://127.0.0.1:4222");
+  });
+
+  test("falls back to the default when every configured port is invalid", () => {
+    expect(
+      getDesktopDevServerOrigin({
+        MUX_DEVSERVER_PORT: "70000",
+        MUX_VITE_PORT: "0",
+      } as NodeJS.ProcessEnv)
+    ).toBe(`http://127.0.0.1:${DEFAULT_DEV_UI_PORT}`);
+  });
+
   test("formats IPv6 hosts correctly", () => {
     expect(
       getDesktopDevServerOrigin({
