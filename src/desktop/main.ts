@@ -91,6 +91,7 @@ import {
 } from "./utils/muxProtocolRegistration";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
+import { getDesktopDevServerOrigin } from "@/constants/devServer";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -131,8 +132,6 @@ if (isE2ETest) {
 const localhostProxyTemplate =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
   process.env.MUX_PROXY_URI?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
-
-const devServerPort = process.env.MUX_DEVSERVER_PORT ?? "5173";
 
 console.log(
   `Mux starting - version: ${(VERSION as { git?: string; buildTime?: string }).git ?? "(dev)"} (built: ${(VERSION as { git?: string; buildTime?: string }).buildTime ?? "dev-mode"})`
@@ -801,8 +800,7 @@ function createWindow() {
   mainWindowFinishedLoading = false;
 
   const useDevServer = (isE2ETest && !forceDistLoad) || (!app.isPackaged && !forceDistLoad);
-  const devHost = process.env.MUX_DEVSERVER_HOST ?? "127.0.0.1";
-  const devServerUrl = `http://${devHost}:${devServerPort}`;
+  const devServerUrl = getDesktopDevServerOrigin(process.env);
   let devServerRetryTimeout: ReturnType<typeof setTimeout> | null = null;
   let devServerRetryAttempt = 0;
 

@@ -105,20 +105,20 @@ See [the documentation](https://mux.coder.com) for more details.
 
 This project uses the [Makefile](./Makefile) as the primary command runner. Use `make` for the main workflows:
 
-| Command      | Description                                                |
-| ------------ | ---------------------------------------------------------- |
-| `make dev`   | Start dev server (backend :3000 + frontend :5173 with HMR) |
-| `make build` | Full build (renderer + main + preload + icons + static)    |
-| `make web`   | Build web frontend only (Vite → dist/)                     |
-| `make clean` | Clean all build artifacts                                  |
-| `make help`  | List all available targets                                 |
+| Command              | Description                                                     |
+| -------------------- | --------------------------------------------------------------- |
+| `make dev`           | Start full browser dev stack (backend :5173 + frontend :3010)   |
+| `make dev-desktop`   | Start Vite + Electron entrypoint watchers (no backend server)   |
+| `make build`         | Full build (renderer + main + preload + icons + static)         |
+| `make clean`         | Clean all build artifacts                                       |
+| `make help`          | List all available targets                                      |
 
-If you prefer Bun, `bun run <target>` proxies to the same Make targets.
+If you prefer Bun, `bun run dev` starts the full browser stack and `bun run dev:desktop`
+starts the Electron-oriented watcher stack.
 
 Repo dev binds the Vite/dev-server stack on LAN-visible addresses by default so
 other devices on your network can hit the local UI during development. Override
-`VITE_HOST=127.0.0.1` (and `BACKEND_HOST=127.0.0.1` for `make dev-server`) if
-you want a local-only session.
+`VITE_HOST=127.0.0.1 BACKEND_HOST=127.0.0.1 bun run dev` if you want a local-only session.
 
 See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 

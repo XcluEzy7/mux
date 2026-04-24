@@ -8,6 +8,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import * as path from "path";
 import { normalizeAndValidateExternalUrl } from "@/desktop/utils/normalizeAndValidateExternalUrl";
+import { getDesktopDevServerOrigin } from "@/constants/devServer";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
@@ -115,9 +116,10 @@ export class TerminalWindowManager {
     }
 
     if (useDevServer) {
-      // Development mode - load from Vite dev server
-      const params = new URLSearchParams(queryParams);
-      await terminalWindow.loadURL(`http://localhost:5173/terminal.html?${params.toString()}`);
+      // Development mode - load from the active Vite dev server.
+      const terminalUrl = new URL("/terminal.html", getDesktopDevServerOrigin(process.env));
+      terminalUrl.search = new URLSearchParams(queryParams).toString();
+      await terminalWindow.loadURL(terminalUrl.toString());
       terminalWindow.webContents.openDevTools();
     } else {
       // Production mode (or E2E dist mode) - load from built files

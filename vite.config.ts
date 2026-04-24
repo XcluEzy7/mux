@@ -6,6 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "./src/node/orpc/wsPaths";
+import { DEFAULT_DEV_UI_PORT } from "./src/constants/devServer";
 import { novncCompatPlugin } from "./src/vite/novncCompatPlugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
 // local Vite UI without extra flags. Production/server mode still uses explicit
 // host/port controls (`mux server --host/--port` or the desktop settings UI).
 const devServerHost = process.env.MUX_VITE_HOST ?? "0.0.0.0";
-const devServerPort = Number(process.env.MUX_VITE_PORT ?? "3010");
+const devServerPort = Number(process.env.MUX_VITE_PORT ?? String(DEFAULT_DEV_UI_PORT));
 
 const devServerAllowedHosts = (() => {
   const raw = process.env.MUX_VITE_ALLOWED_HOSTS?.trim();
@@ -206,9 +207,10 @@ export default defineConfig(({ mode }) => {
         // Ignore node_modules to drastically reduce file handle usage
         ignored: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
 
-        // Use polling on Windows to avoid file handle exhaustion
-        // This is slightly less efficient but much more stable
-        usePolling: process.platform === "win32",
+        // Use polling on Windows and in low-inotify Linux environments.
+        // This is slightly less efficient but much more stable.
+        usePolling:
+          process.platform === "win32" || process.env.MUX_VITE_USE_POLLING === "1",
 
         // If using polling, set a reasonable interval (in milliseconds)
         interval: 1000,
